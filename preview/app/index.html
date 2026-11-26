@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<title>Echo · 3D Ghost Assistant</title>
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Echo">
+<link rel="apple-touch-icon" href="assets/icon-180.png?v=7">
+<link rel="icon" href="assets/icon-192.png?v=7">
+<link rel="manifest" href="manifest.webmanifest?v=7">
+<link rel="stylesheet" href="css/style.css?v=7">
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
+</head>
+<body>
+<div id="app">
+  <canvas id="scene" aria-label="3D ghost mascot. Tap to say hi, drag to spin."></canvas>
+
+  <header class="top">
+    <div class="brand">
+      <span class="dot" id="statusDot"></span>
+      <div>
+        <div class="name" id="botName">Echo</div>
+        <div class="status" id="statusText">Online</div>
+      </div>
+    </div>
+    <div class="actions">
+      <span class="chip" id="modeChip">Demo</span>
+      <button class="icon-btn lang" id="langBtn" aria-label="Language">EN</button>
+      <button class="icon-btn" id="muteBtn" aria-label="Mute voice">
+        <svg viewBox="0 0 24 24" class="ic-on"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <svg viewBox="0 0 24 24" class="ic-off"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 9l5 6M22 9l-5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <button class="icon-btn" id="settingsBtn" aria-label="Settings">
+        <svg viewBox="0 0 24 24"><path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7zm7.4-2.5a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.4 2.5a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 1.7 1L11 21h4l.4-2.5a7.4 7.4 0 0 0 1.7-1l2.4 1 2-3.4-2.1-1.6z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="dl-pill" id="dlPill" hidden></div>
+  <button type="button" class="key-nudge" id="keyNudge" hidden>🔑 Paste your Gemini key in ⚙️ for the natural AI voice</button>
+  <div class="hint" id="hint">Tap me · drag to spin</div>
+
+  <div class="greet"><div class="g-hi">Hi, I'm Echo!</div><h1>How can I help<br>you today?</h1></div>
+  <div class="chips" aria-label="Suggestions">
+    <button type="button" data-q="Give me a quick productivity tip">⚡ Quick tip</button>
+    <button type="button" data-q="Roast my morning routine: coffee, scroll, panic">🔥 Roast me</button>
+    <button type="button" data-q="Give me Instagram content ideas for interior design">💡 Content ideas</button>
+    <button type="button" data-q="Tell me a short ghost joke">👻 Joke</button>
+    <button type="button" data-q="Help me plan my day">🗓 Plan my day</button>
+  </div>
+  <div class="subtitle" id="subtitle"><span class="sub-name">Echo</span><p id="subText"></p></div>
+
+  <section class="chat">
+    <div class="log" id="log" aria-live="polite"></div>
+    <form class="composer" id="composer" autocomplete="off">
+      <button type="button" class="mic" id="micBtn" aria-label="Talk">
+        <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <input id="input" type="text" enterkeyhint="send" placeholder="Ask me anything…" aria-label="Message">
+      <button type="submit" class="send" id="sendBtn" aria-label="Send">
+        <svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-2.5-6.5L4 12z"/></svg>
+      </button>
+    </form>
+  </section>
+
+  <div class="sheet-backdrop" id="sheetBackdrop" hidden></div>
+  <form class="sheet" id="sheet" hidden aria-label="Settings" onsubmit="return false">
+    <div class="grab"></div>
+    <h2>Settings</h2>
+    <label class="field">
+      <span>Gemini API key</span>
+      <div class="keyrow">
+        <input id="keyInput" type="password" autocomplete="new-password" placeholder="Paste your key (AIza…)" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <button type="button" class="ghost-btn" id="showKeyBtn">Show</button>
+      </div>
+      <small>Free key: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>. Saved only on this phone (localStorage), never in the code.</small>
+    </label>
+    <label class="field">
+      <span>Model</span>
+      <select id="modelSelect"></select>
+    </label>
+    <div class="field">
+      <span>Voice</span>
+      <select id="engineSelect">
+        <option value="kokoro">Heart &amp; friends – free, on this phone ★</option>
+        <option value="gemini">Gemini AI voice (needs your key)</option>
+        <option value="device">iPhone voice (offline)</option>
+      </select>
+      <div class="keyrow" style="margin-top:8px">
+        <select id="kokoroVoiceSelect" aria-label="Free voice"></select>
+        <select id="geminiVoiceSelect" aria-label="AI voice" hidden></select>
+        <select id="deviceVoiceSelect" aria-label="iPhone voice" hidden></select>
+        <button type="button" class="ghost-btn" id="testVoiceBtn">Test</button>
+      </div>
+      <div class="kokoro-opts" id="kokoroOpts">
+        <label class="mini"><span>Model size</span><select id="kModelSelect"></select></label>
+        <label class="mini"><span>Engine</span><select id="kDeviceSelect"><option value="auto">Auto (WebGPU → WASM)</option><option value="wasm">WASM only (safest)</option></select></label>
+        <label class="mini"><span>Playback</span><select id="kModeSelect"><option value="stream">Stream – talks right away</option><option value="gapless">Gapless – smooth, starts later</option></select></label>
+        <div class="kbar" id="kBar"><i></i></div>
+        <div class="kstatus" id="kStatus"></div>
+        <button type="button" class="ghost-btn small" id="kClearBtn">Delete downloaded voice models</button>
+      </div>
+      <div class="using" id="voiceUsing">Using: …</div>
+      <small id="voiceTip">Heart is a free open-source voice (Kokoro) that runs on this phone – no key, no cost. It downloads once (~86 MB) and stays cached. If it isn't ready yet, Echo uses the Gemini voice (if you pasted a key) or the iPhone voice.</small>
+    </div>
+    <label class="field row">
+      <span>Remember chat on this phone</span>
+      <input type="checkbox" id="persistChk">
+    </label>
+    <div class="btnrow">
+      <button type="button" class="primary" id="saveBtn">Save</button>
+      <button type="button" class="ghost-btn" id="clearKeyBtn">Remove key</button>
+      <button type="button" class="ghost-btn" id="clearChatBtn">Clear chat</button>
+    </div>
+    <p class="fine" id="voiceInfo"></p>
+    <p class="fine ver" id="verLabel"></p>
+  </form>
+</div>
+<script type="module" src="js/main.js?v=7"></script>
+</body>
+</html>
