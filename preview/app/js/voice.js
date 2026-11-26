@@ -1,8 +1,7 @@
 // Echo voice output (v7): free on-device Kokoro "Heart" voice first, then Gemini TTS (user's own key), then the iPhone voice.
-import { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE, KOKORO_CACHE, KOKORO_HF } from './kokoro-config.js?v=7.2';
+import { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE, KOKORO_CACHE, KOKORO_HF } from './kokoro-config.js?v=7.3';
 export { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE };
-import { Heart, chunks as heartChunks } from './heart-engine.js?v=7.2';
-import { textToPhonemes } from './kokoro-phonemize.js?v=7.2';
+import { Heart, chunks as heartChunks } from './heart-engine.js?v=7.3';
 const TTS_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 export const TTS_MODELS = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
 export const GEMINI_VOICES = [
@@ -119,8 +118,6 @@ export class Kokoro {
       if (h !== this.heart) return;
       this.state = 'ready'; this.device = h.device; this.loadMs = Math.round(performance.now() - t0); this.clearCrumb();
       dbg(`[heart] ready on ${h.device} in ${this.loadMs} ms`); this.onChange({ type: 'ready' });
-      // warm the phonemizer AFTER the model is ready (never concurrently), no failure flag – same call heart.html makes
-      const p0 = performance.now(); textToPhonemes('Hi there.', 'a').then(() => { this.phonMs = Math.round(performance.now() - p0); dbg(`[heart] phonemizer warm in ${this.phonMs} ms`); }).catch(e => dbg('[heart] phonemizer warm-up error ' + (e.message || e)));
     }).catch((e) => {
       if (h !== this.heart) return;
       this.state = 'error'; this.error = `${this.stage}: ${e.message || e}`; this.clearCrumb(); dbg('[heart] load error ' + this.error); this.onChange({ type: 'error' });
@@ -149,8 +146,8 @@ export class Kokoro {
 }
 
 export class Voice {
-  constructor({ getKey, getPrefs, onLevel, onStart, onEnd, onStatus }) {
-    Object.assign(this, { getKey, getPrefs, onLevel, onStart, onEnd, onStatus });
+  constructor({ getKey, getPrefs, onLevel, onPrepare, onStart, onEnd, onStatus }) {
+    Object.assign(this, { getKey, getPrefs, onLevel, onPrepare, onStart, onEnd, onStatus });
     this.synth = 'speechSynthesis' in window ? window.speechSynthesis : null;
     this.voices = [];
     this.ctx = null; this.analyser = null; this.source = null; this.el = null;
@@ -261,6 +258,7 @@ export class Voice {
     this._finish(true);
   }
 
+  _markStarted() { if (!this._started) { this._started = true; this.onStart?.(); } }
   _finish() { if (this.speaking) { this.speaking = false; this.onEnd?.(); } this.onStatus?.(); }
 
   async speak(text, uiLang, opts = {}) {
@@ -270,7 +268,7 @@ export class Voice {
     if (!clean) return;
     const lang = detectLang(clean, uiLang);
     const prefs = this.getPrefs(), key = this.getKey();
-    this.speaking = true; this.onStart?.();
+    this.speaking = true; this._started = false; this.onPrepare?.();   // 'Speaking…' only once audio really starts
     let order = this._order(prefs);
     if (opts.device) order = this.kokoro.ready && prefs.engine !== 'device' ? ['kokoro', 'device'] : ['device'];   // short tap lines: never wait for a download or call the API
     for (const eng of order) {
@@ -351,7 +349,9 @@ export class Voice {
     try {
       el.muted = false; el.volume = 1; el.src = url;
       dbg(`[audio] <audio> play ${dur.toFixed(1)}s`);
-      await Promise.race([el.play(), new Promise((_, rej) => setTimeout(() => rej(new Error('play() timed out')), 4000))]);
+      // generation blocks the main thread, so a wall-clock timeout can fire late – check the element's real state instead
+      await Promise.race([el.play(), new Promise((res, rej) => setTimeout(() => (!el.paused && el.currentTime >= 0 ? res() : rej(new Error('play() blocked'))), 4000))]);
+      this._markStarted();
       this._elPcm = samples; this._elRate = rate;   // ghost glow follows the real samples
       await new Promise((resolve) => {
         let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); el.onended = el.onerror = el.onpause = null; resolve(); };
@@ -369,7 +369,7 @@ export class Voice {
       const src = this.ctx.createBufferSource(); src.buffer = buf; src.connect(this.ctx.destination); src.connect(this.analyser);
       let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); if (this.source === src) this.source = null; resolve(); };
       src.onended = end; const guard = setTimeout(end, dur * 1000 + 1500);
-      this.source = src; (this._ksrcs = this._ksrcs || []).push(src); src.start(0);
+      this.source = src; (this._ksrcs = this._ksrcs || []).push(src); src.start(0); this._markStarted();
     });
   }
   level() {
@@ -466,7 +466,7 @@ export class Voice {
         u.rate = 1.05; u.pitch = 1.18; u.volume = 1;
         this._utts.push(u); if (this._utts.length > 8) this._utts.shift();   // keep refs: iOS GC can drop onend
         let started = false;
-        u.onstart = () => { started = true; };
+        u.onstart = () => { started = true; this._markStarted(); };
         u.onboundary = () => this.onLevel?.(1);
         let done = false; const fin = (ev) => {
           if (done) return; done = true; clearTimeout(guard); clearTimeout(kick);

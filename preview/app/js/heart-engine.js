@@ -2,7 +2,9 @@
 // Only additions: voice (style) choice and an explicit Auto=WASM on iPhone.
 // Kokoro (Apache-2.0), ONNX Runtime Web (MIT). No key, no server. Lean pipeline: no transformers.js,
 // one model copy in JS (dropped right after session create), single-threaded WASM with SIMD, memory arena off.
-import { textToPhonemes, VOCAB } from './kokoro-phonemize.js?v=7.2';
+// v7.3: phonemes come from a pure-JS lexicon G2P (g2p.js) – the espeak-ng phonemizer hung inside the app on iPhone.
+import { VOCAB } from './kokoro-vocab.js?v=7.3';
+import { g2p, loadLexicon } from './g2p.js?v=7.3';
 const ORT_VER = '1.22.0', ORT = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VER}/dist/`;
 const HF = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/';
 const CACHE = 'echo-kokoro-v1';
@@ -71,6 +73,8 @@ export class Heart {
     if (device === 'webgpu' && !navigator.gpu) throw new Error('WebGPU not available in this browser');
     this.stage('download', `${model.id} · ${model.mb} MB`);
     await this.setVoice(this.voiceId || 'af_heart');
+    this.stage('download', 'English dictionary (~1.3 MB)');
+    await withTimeout(loadLexicon(new URL('../assets/lexicon-us.tsv?v=7.3', import.meta.url).href), 60000, 'dictionary download');
     let bytes = await fetchModel(HF + model.file, onProg);
     this.stage('engine', `loading ONNX Runtime (${wantGpu ? 'WebGPU+WASM' : 'WASM'})`); await tick();
     const ort = await withTimeout(loadOrt(wantGpu), 60000, 'engine load');
@@ -102,7 +106,7 @@ export class Heart {
   }
   async synth(text, speed = 1) {
     this.stage('phonemize', `"${text.slice(0, 40)}${text.length > 40 ? '…' : ''}"`); await tick();
-    const ph = await withTimeout(textToPhonemes(text, 'a'), 20000, 'phonemizer');
+    const ph = g2p(text);   // synchronous, ~1 ms
     const ids = [0]; for (const ch of ph) { const id = VOCAB[ch]; if (id !== undefined) ids.push(id); } ids.push(0);
     if (ids.length > 510) ids.length = 509, ids.push(0);
     const n = ids.length, off = 256 * Math.min(Math.max(n - 2, 0), 509);

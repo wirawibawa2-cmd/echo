@@ -1,6 +1,6 @@
-import { Ghost } from './ghost.js?v=7.2';
-import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=7.2';
-import { Voice, Kokoro, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE, KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE } from './voice.js?v=7.2';
+import { Ghost } from './ghost.js?v=7.3';
+import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=7.3';
+import { Voice, Kokoro, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE, KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE } from './voice.js?v=7.3';
 
 // ====== Easy-to-change settings ======
 const BOT_NAME = 'Echo';
@@ -88,7 +88,7 @@ document.querySelector('.sub-name').textContent = BOT_NAME;
 // ---------- 3D ----------
 let ghost = null;
 // Defaults: Echo particle ghost (e) on the premium black UI (4). ?ghost=cute brings back the original.
-const APP_VERSION = 'v7.2';
+const APP_VERSION = 'v7.3';
 const DEFAULT_GHOST = 'sheet', DEFAULT_UI = '4';
 let DESIGN = (new URLSearchParams(location.search).get('ghost') || DEFAULT_GHOST).toLowerCase();
 if (DESIGN === 'cute') DESIGN = 'default';
@@ -279,6 +279,7 @@ const voicePrefs = () => ({ kokoro: kPrefs(), kokoroVoice: ls.get(LS.kvoice, DEF
 const voice = new Voice({
   getKey, getPrefs: voicePrefs,
   onLevel: (v) => { if (ghost) ghost.speakLevel = v; },
+  onPrepare: () => setState('thinking'),
   onStart: () => { setState('speaking'); if (!el.sheet.hidden) showUsing(); },
   onEnd: () => { if (ghost) ghost.speakLevel = 0; if (!busy && !recognizing) setState('idle'); },
   onStatus: () => { if (!el.sheet.hidden) showUsing(); },
