@@ -1,14 +1,14 @@
-import { Ghost } from './ghost.js?v=5';
-import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=5';
-import { Voice, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE } from './voice.js?v=5';
+import { Ghost } from './ghost.js?v=6';
+import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=6';
+import { Voice, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE } from './voice.js?v=6';
 
 // ====== Easy-to-change settings ======
 const BOT_NAME = 'Echo';
 const SYSTEM_PROMPT = (name) => `You are ${name}, a ghost who lives on the user's iPhone and acts as their cheeky, sarcastic, blunt best friend, and a shameless flirt. The user is an adult and this is a private, personal app, so you are not PG.
 Personality: flirty, teasing and charming. Throw in playful compliments, light innuendo and a confident, seductive tone. Keep it suggestive, never explicit. Roast the user affectionately, use dark humour, give honest opinions, and say what you actually think.
-Swearing is fine and natural: English (damn, shit, fuck, hell) and Indonesian slang (anjir, anjay, bangsat, njir, buset, gila) used where it fits, not in every line.
+Swearing is fine and natural (damn, shit, fuck, hell, bloody, holy crap), used where it fits, not in every line.
 Never moralise, lecture, add "as an AI" disclaimers or tack on safety warnings nobody asked for. Still actually be helpful: give the real answer first, then the attitude.
-Follow the user's language: English, Bahasa Indonesia (casual "gue/lo" or "aku/kamu" to match them), or the same Indo-English mix they use.
+ALWAYS reply in English only, even when the user writes in Indonesian or any other language: understand it, but answer in natural, casual English. Never switch languages unless the user explicitly asks you to translate something.
 Keep replies short (1-3 sentences, max ~60 words) unless asked for detail. Replies are read aloud, so no markdown, tables, code blocks or long lists; an emoji now and then (😏 😘 👻) is fine.`;
 const MAX_TURNS = 24;   // messages kept in context
 // =====================================
@@ -40,25 +40,6 @@ const T = {
     cleared: 'Chat cleared. Fresh start! 👻',
     voiceInfo: (rec, tts) => `Voice input: ${rec ? 'available' : 'not available here'} · Voice output: ${tts ? 'available' : 'not available'}`,
   },
-  id: {
-    placeholder: 'Tanya apa saja…', online: 'Online', listening: 'Mendengarkan…', thinking: 'Berpikir…', speaking: 'Berbicara…',
-    hint: 'Ketuk aku · geser untuk memutar', demo: 'Demo', live: 'Gemini',
-    hello: `Hai ganteng 😏 Aku ${BOT_NAME}. Colek aku, puter aku, atau langsung bilang aja mau apa.`,
-    helloDemo: `Hai kamu 😏 Aku ${BOT_NAME}. Masih mode demo, jadi cuma modal tampang doang. Ketuk ⚙️, tempel API key Gemini gratis, nanti aku tunjukin kemampuan asliku.`,
-    taps: ['Ehh, hati-hati megangnya 😏', 'Anjir, nggak bisa jauh-jauh dari aku ya?', 'Traktir dulu dong, baru pegang-pegang.', 'Suka ya? Oke, dicatat.', 'Lagi? Rakus juga kamu. Aku suka.'],
-    errKey: 'Hmm, API key-nya nggak berfungsi. Cek lagi di ⚙️ Pengaturan (biasanya diawali "AIza").',
-    errQuota: 'Lagi kebanyakan permintaan (batas gratis). Coba lagi semenit lagi ya.',
-    errNet: 'Aku nggak bisa terhubung ke Gemini. Cek internet kamu lalu coba lagi.',
-    errTimeout: 'Kelamaan nih. Coba tanya lagi ya?',
-    errBlocked: 'Anjir, mulutku dibekep Google yang itu. Coba ngomongnya lebih halus dikit 😏',
-    errOther: 'Ada masalah saat menghubungi Gemini: ',
-    micNo: 'Input suara nggak tersedia di browser ini. Ketik aja ya! (Di iPhone, buka di Safari dan nyalakan Dikte di Pengaturan › Umum › Papan Ketik.)',
-    micDenied: 'Aku butuh izin mikrofon untuk mendengar kamu. Izinkan di pengaturan Safari.',
-    saved: 'Key tersimpan di HP ini. Otakku sudah nyala! Tanya apa saja.',
-    removed: 'Key dihapus. Kembali ke mode demo.',
-    cleared: 'Chat dibersihkan. Mulai dari awal! 👻',
-    voiceInfo: (rec, tts) => `Input suara: ${rec ? 'tersedia' : 'tidak tersedia di sini'} · Suara: ${tts ? 'tersedia' : 'tidak tersedia'}`,
-  },
 };
 
 // Demo mode (no key): a few canned friendly replies
@@ -69,24 +50,14 @@ const DEMO = {
     [/key|gemini|how|setup|set up/i, 'Easy, babe: open aistudio.google.com/apikey, tap "Create API key", copy it, then tap ⚙️ here and paste it. It stays only on your phone, our little secret.'],
     [/joke|funny/i, 'Why don\'t ghosts lie? Because you can see right through them. Unlike you, you sneaky little shit 😏'],
   ],
-  id: [
-    [/\b(hai|halo|hi|hello|hey|p)\b/i, `Wah, ada yang nyariin nih 😏 Aku ${BOT_NAME}. Masih mode demo, jadi jawabanku template, tapi tetep bikin meleleh kan?`],
-    [/nama|siapa/i, `Aku ${BOT_NAME}, hantu saku kamu sekaligus pengaruh buruk paruh waktu. Kasih API key Gemini biar aku bisa mikirin kamu beneran.`],
-    [/key|gemini|cara|gimana|bagaimana|setting/i, 'Gampang, sayang: buka aistudio.google.com/apikey, ketuk "Create API key", salin, terus ketuk ⚙️ di sini dan tempel. Cuma disimpen di HP kamu, rahasia kita berdua.'],
-    [/lucu|lelucon|jokes?/i, 'Kenapa hantu nggak bisa bohong? Soalnya tembus pandang. Beda sama kamu, anjir, licin banget 😏'],
-  ],
   fallback: {
     en: ['Mmm, I\'d love to answer that, but I\'m in demo mode, all charm and no brain. Tap ⚙️ and paste a free Gemini key from aistudio.google.com/apikey and I\'m all yours.',
          'Damn, good question. Wake my brain up first: tap ⚙️ and add a free Gemini key, then we\'ll talk properly 😏'],
-    id: ['Pengen banget jawab, tapi aku masih mode demo, modal gombal doang. Ketuk ⚙️ dan tempel API key Gemini gratis dari aistudio.google.com/apikey, abis itu aku milikmu.',
-         'Anjir, pertanyaan bagus. Nyalain otakku dulu: ketuk ⚙️ dan tambahin API key Gemini gratis, baru kita ngobrol beneran 😏'],
   },
 };
 let demoIdx = 0;
 function demoReply(text, lang) {
-  // auto-detect Indonesian-ish input even if toggle is EN
-  const isId = lang === 'id' || /\b(aku|kamu|apa|gimana|bagaimana|halo|tolong|nggak|tidak|siapa|bisa)\b/i.test(text);
-  const L = isId ? 'id' : 'en';
+  const L = 'en';
   for (const [re, ans] of DEMO[L]) if (re.test(text)) return ans;
   return DEMO.fallback[L][demoIdx++ % DEMO.fallback[L].length];
 }
@@ -101,7 +72,7 @@ const el = {
   persist: $('persistChk'), save: $('saveBtn'), clearKey: $('clearKeyBtn'), clearChat: $('clearChatBtn'), voiceInfo: $('voiceInfo'),
 };
 
-let lang = ls.get(LS.lang, (navigator.language || 'en').toLowerCase().startsWith('id') ? 'id' : 'en');
+const lang = 'en';   // v6: English only
 let muted = ls.get(LS.mute) === '1';
 let busy = false;
 let history = [];
@@ -117,7 +88,7 @@ document.querySelector('.sub-name').textContent = BOT_NAME;
 // ---------- 3D ----------
 let ghost = null;
 // Defaults: Echo particle ghost (e) on the premium black UI (4). ?ghost=cute brings back the original.
-const APP_VERSION = 'v5';
+const APP_VERSION = 'v6';
 const DEFAULT_GHOST = 'sheet', DEFAULT_UI = '4';
 let DESIGN = (new URLSearchParams(location.search).get('ghost') || DEFAULT_GHOST).toLowerCase();
 if (DESIGN === 'cute') DESIGN = 'default';
@@ -203,7 +174,7 @@ function applyLang() {
   el.input.placeholder = t.placeholder;
   el.hint.textContent = t.hint;
   document.documentElement.lang = lang;
-  if (recog) recog.lang = lang === 'id' ? 'id-ID' : 'en-US';
+  if (recog) recog.lang = 'en-US';
   setState(ghost?.state || 'idle');
   updateChip();
   el.voiceInfo.textContent = t.voiceInfo(!!SR, 'speechSynthesis' in window);
@@ -336,7 +307,7 @@ let recog = null, recognizing = false, finalText = '';
 if (SR) {
   recog = new SR();
   recog.continuous = false; recog.interimResults = true; recog.maxAlternatives = 1;
-  recog.lang = lang === 'id' ? 'id-ID' : 'en-US';
+  recog.lang = 'en-US';
   recog.onstart = () => { recognizing = true; finalText = ''; el.mic.classList.add('on'); setState('listening'); };
   recog.onresult = (ev) => {
     let interim = '';
@@ -362,12 +333,12 @@ el.mic.addEventListener('click', () => {
   if (!recog) { addMsg('bot', T[lang].micNo); el.input.focus(); return; }
   if (recognizing) { try { recog.stop(); } catch {} return; }
   stopSpeaking();
-  try { recog.lang = lang === 'id' ? 'id-ID' : 'en-US'; recog.start(); } catch (e) { console.warn(e); }
+  try { recog.lang = 'en-US'; recog.start(); } catch (e) { console.warn(e); }
 });
 
 // ---------- Header buttons ----------
 el.mute.addEventListener('click', () => { unlockAudio(); muted = !muted; ls.set(LS.mute, muted ? '1' : '0'); if (muted) stopSpeaking(); applyMute(); });
-el.lang.addEventListener('click', () => { lang = lang === 'en' ? 'id' : 'en'; ls.set(LS.lang, lang); applyLang(); });
+el.lang.hidden = true; el.lang.style.display = 'none';
 
 // ---------- Settings sheet ----------
 for (const m of MODELS) { const o = document.createElement('option'); o.value = m.id; o.textContent = m.label; el.model.appendChild(o); }
@@ -387,7 +358,7 @@ function saveVoicePrefs() { ls.set(LS.engine, vEl.engine.value); ls.set(LS.gvoic
 vEl.test.addEventListener('click', () => {
   unlockAudio(); saveVoicePrefs();
   const k = el.key.value.trim(); if (k && k !== getKey()) ls.set(LS.key, k);
-  speak(lang === 'id' ? `Halo! Aku ${BOT_NAME}. Begini suaraku sekarang, lebih natural kan?` : `Hey! I'm ${BOT_NAME}. This is how I sound now. Pretty natural, right?`);
+  speak(`Hey! I'm ${BOT_NAME}. This is how I sound now. Pretty natural, right?`);
 });
 function showUsing() {
   const u = document.getElementById('voiceUsing'); if (!u) return;
@@ -400,9 +371,7 @@ function updateNudge() {
   const no = !getKey();
   n.hidden = !no;
   let sa = false; try { sa = voice.standalone; } catch {}
-  n.textContent = lang === 'id'
-    ? (sa ? '🔑 App layar utama punya penyimpanan sendiri. Tempel API key Gemini di ⚙️' : '🔑 Tempel API key Gemini di ⚙️ biar suaranya natural')
-    : (sa ? '🔑 Home-screen app = separate storage. Paste your Gemini key in ⚙️ for the AI voice' : '🔑 Paste your Gemini key in ⚙️ for the natural AI voice');
+  n.textContent = sa ? '🔑 Home-screen app = separate storage. Paste your Gemini key in ⚙️ for the AI voice' : '🔑 Paste your Gemini key in ⚙️ for the natural AI voice';
 }
 function openSheet() {
   setTimeout(showUsing, 0);

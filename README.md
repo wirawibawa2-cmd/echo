@@ -21,3 +21,6 @@
 ## Persona (v4)
 Adult, personal-use persona: cheeky, sarcastic, blunt best friend and shameless flirt (suggestive, never explicit), swearing in EN/ID slang allowed, no moralising or "as an AI" disclaimers, follows the user's language. Edit `SYSTEM_PROMPT` in `js/main.js` to change it.
 Gemini `safetySettings` are sent at the most permissive levels the API accepts (`OFF` for harassment, hate speech, sexually explicit, dangerous, plus civic integrity if supported; steps down to `BLOCK_NONE` or defaults if the API rejects a level). Google's core protections still apply; blocked replies get a snarky fallback line.
+
+## Language (v6)
+Echo is English-only: UI, greetings, chips, demo and tap lines are English; the persona always replies in English (even to Indonesian input); speech recognition is en-US; Gemini TTS is styled as American English and the iPhone backup voice prefers en-US voices (Zoe, Nicky, Ava, Samantha).

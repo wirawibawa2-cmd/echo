@@ -10,18 +10,12 @@ export const GEMINI_VOICES = [
 ];
 export const DEFAULT_GEMINI_VOICE = 'Leda';
 // Short constant style string (per Google's TTS prompting guide): cute but natural, never robotic or chipmunk.
-const STYLE = 'playful, warm and teasing, a little sultry and flirty, smiling while talking; natural, not robotic';
+const STYLE = 'American English; playful, warm and teasing, a little sultry and flirty, smiling while talking; natural, not robotic';
 
 // Novelty / old robotic voices on Apple & others – never auto-pick these.
 const ROBOTIC = /(albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|eddy|flo|grandma|grandpa|reed|rocko|sandy|shelley|eloquence|espeak)/i;
 
-export function detectLang(text, fallback) {
-  const id = (text.match(/\b(aku|kamu|yang|dan|ini|itu|apa|tidak|nggak|bisa|untuk|dengan|ada|saya|halo|terima|kasih|sudah|lagi|ya|juga|mau|cuaca|hari)\b/gi) || []).length;
-  const en = (text.match(/\b(the|and|you|is|are|what|this|that|with|for|have|can|your|i'm|it's|to)\b/gi) || []).length;
-  if (id > en) return 'id';
-  if (en > id) return 'en';
-  return fallback;
-}
+export function detectLang() { return 'en'; }   // v6: Echo is English-only
 
 export function scoreVoice(v, lang) {
   const l = (v.lang || '').toLowerCase().replace('_', '-');
@@ -40,7 +34,7 @@ export function scoreVoice(v, lang) {
     if (/\b(zoe|nicky)\b/i.test(n)) s += 4;
     if (l === 'en-us') s += 4; else if (l === 'en-gb' || l === 'en-au') s += 2;
   }
-  if (lang === 'id' && /damayanti/i.test(n)) s += 12;
+  if (lang === 'en' && l !== 'en-us') s -= 6;   // v6: prefer US English
   if (v.localService) s += 1;
   return s;
 }
@@ -163,8 +157,8 @@ export class Voice {
   }
 
   listDeviceVoices() {
-    return this.voices.filter(v => /^(en|id)/i.test(v.lang || ''))
-      .map(v => ({ v, s: Math.max(scoreVoice(v, 'en'), scoreVoice(v, 'id')) }))
+    return this.voices.filter(v => /^en/i.test(v.lang || ''))
+      .map(v => ({ v, s: scoreVoice(v, 'en') }))
       .sort((a, b) => b.s - a.s).map(x => x.v);
   }
 
@@ -309,7 +303,7 @@ export class Voice {
         if (tok !== this.token) return resolve();
         if (i >= parts.length) { this._finish(); return resolve(); }
         const u = new SpeechSynthesisUtterance(parts[i++]);
-        u.lang = v?.lang || (lang === 'id' ? 'id-ID' : 'en-US');
+        u.lang = v?.lang || 'en-US';
         if (v) u.voice = v;
         u.rate = 1.05; u.pitch = 1.18; u.volume = 1;
         this._utts.push(u); if (this._utts.length > 8) this._utts.shift();   // keep refs: iOS GC can drop onend
