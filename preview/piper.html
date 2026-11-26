@@ -1,0 +1,103 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#000000">
+<title>Echo – Piper free voice test</title>
+<style>
+body{margin:0;background:#000;color:#eef0f5;font:16px/1.45 -apple-system,system-ui,sans-serif;padding:calc(env(safe-area-inset-top) + 20px) 18px 40px}
+h1{font-size:22px;margin:0 0 4px}p.s{color:#9aa0ab;margin:0 0 14px;font-size:14px}
+.note{background:#1d1a12;border:1px solid #4a3d1c;color:#ffd28a;border-radius:12px;padding:10px 12px;font-size:14px;margin-bottom:10px}
+.card{background:#121418;border:1px solid #23262d;border-radius:16px;padding:14px;margin:10px 0}
+.row{display:flex;align-items:center;gap:10px}.row .t{flex:1}.t b{display:block}.t small{color:#9aa0ab;display:block}.t i{color:#6f7682;font-size:11.5px;font-style:normal}
+button{font:600 15px -apple-system,system-ui;border:0;border-radius:12px;padding:11px 16px;background:#fff;color:#000}
+button.sec{background:#23262d;color:#fff}button:disabled{opacity:.45}
+#bar{height:8px;background:#23262d;border-radius:6px;overflow:hidden;margin:8px 0 4px}#bar i{display:block;height:100%;width:0;background:#e9ecf3;transition:width .2s}
+#status{font-size:14px;color:#c9ced8;min-height:1.4em}#status.err{color:#ff8f8f;font-weight:600}
+textarea{width:100%;box-sizing:border-box;background:#0b0c0f;color:#fff;border:1px solid #2a2d34;border-radius:12px;padding:10px;font:15px -apple-system,system-ui;min-height:66px;margin-top:8px}
+label{font-size:14px;color:#c9ced8;display:flex;gap:8px;align-items:center;margin-top:8px}
+.log{font:12px ui-monospace,monospace;color:#8b919c;white-space:pre-wrap;margin-top:10px}.star{color:#ffd28a}
+</style></head><body>
+<h1>👻 Echo – free Piper voices</h1>
+<p class="s">Piper, open source (MIT), runs fully on this phone. No key, no server, no cost. First Play downloads ~48 MB once (voice 19 MB + shared speech engine); each extra voice ~19 MB. Cached after that.</p>
+<div class="note">🔈 Turn off silent mode and turn the volume up. Tap Play and wait for the bar; errors show here in red.</div>
+<div class="card">
+  <div id="status">Tap Play on a voice.</div>
+  <div id="bar"><i></i></div>
+  <textarea id="txt">Well hello, gorgeous. I'm Echo, your pocket ghost. Ask me anything, I promise I'll only tease you a little.</textarea>
+  <label><input type="checkbox" id="full"> Full quality model (63 MB per voice, from Hugging Face)</label>
+</div>
+<div id="voices"></div>
+<div class="row" style="gap:8px;margin-top:8px"><button class="sec" id="stop">Stop</button><button class="sec" id="clear">Clear downloaded voices</button></div>
+<div class="log" id="log"></div>
+<script>
+// show ANY error on screen (including module load failures on old iOS)
+window.__errs = [];
+function showErr(m) { var s = document.getElementById('status'); s.className = 'err'; s.textContent = 'Error: ' + m; document.getElementById('log').textContent += 'ERROR ' + m + '\n'; window.__errs.push(m); }
+addEventListener('error', function (e) { showErr((e.message || 'script error') + (e.filename ? ' @ ' + e.filename.split('/').pop() : '')); });
+addEventListener('unhandledrejection', function (e) { showErr(String(e.reason && e.reason.message || e.reason)); });
+setTimeout(function () { if (!window.__piperLoaded) showErr('voice engine script did not load (old iOS or blocked CDN). iOS ' + (navigator.userAgent.match(/OS (\d+_\d+)/) || [,'?'])[1]); }, 15000);
+</script>
+<script type="module">
+import { Piper, VOICES } from './piper.js?v=2';
+window.__piperLoaded = true;
+const $ = (id) => document.getElementById(id), log = (s) => { $('log').textContent += s + '\n'; };
+const status = (s, err) => { $('status').className = err ? 'err' : ''; $('status').textContent = s; };
+const piper = new Piper(log);
+let ctx = null, el = null, job = 0, nextT = 0, srcs = [];
+function unlock() {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!ctx) ctx = new AC();
+  if (ctx.state !== 'running') ctx.resume();
+  const b = ctx.createBuffer(1, 1, 22050), s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start(0);
+  if (!el) { el = new Audio(); el.setAttribute('playsinline', ''); el.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='; el.play().catch(() => {}); }
+}
+function wav(pcm, rate) {
+  const b = new ArrayBuffer(44 + pcm.length * 2), v = new DataView(b), w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + pcm.length * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) * 32767, true);
+  return new Blob([b], { type: 'audio/wav' });
+}
+async function playChunk(pcm, rate) {
+  if (ctx && ctx.state !== 'running') { try { await Promise.race([ctx.resume(), new Promise(r => setTimeout(r, 600))]); } catch {} }
+  if (ctx && ctx.state === 'running') {
+    const buf = ctx.createBuffer(1, pcm.length, rate); buf.getChannelData(0).set(pcm);
+    const s = ctx.createBufferSource(); s.buffer = buf; s.connect(ctx.destination);
+    const at = Math.max(ctx.currentTime + 0.03, nextT); s.start(at); nextT = at + buf.duration + 0.12; srcs.push(s);
+    return 'webaudio';
+  }
+  el.src = URL.createObjectURL(wav(pcm, rate)); await el.play(); return 'audio-element';
+}
+const sentences = (s) => (s.match(/[^.!?…]+[.!?…]*\s*/g) || [s]).map(x => x.trim()).filter(Boolean);
+async function play(v) {
+  unlock(); stop(); const my = ++job; nextT = 0;
+  const full = $('full').checked; const t0 = performance.now();
+  try {
+    status(`Loading ${v.name}…`); $('bar').firstChild.style.width = '0%';
+    const key = await piper.prepare(v, full, (l, t) => { const pc = t ? Math.min(100, l / t * 100) : 0; $('bar').firstChild.style.width = pc.toFixed(0) + '%'; status(`Downloading ${v.name}… ${(l / 1e6).toFixed(1)} / ${(t / 1e6).toFixed(0)} MB (one time)`); });
+    $('bar').firstChild.style.width = '100%';
+    if (my !== job) return;
+    status(`Speaking (${v.name})…`);
+    let first = true;
+    for (const s of sentences($('txt').value)) {
+      if (my !== job) return;
+      const g0 = performance.now();
+      const { pcm, rate } = await piper.synth(key, s);
+      const ms = performance.now() - g0, dur = pcm.length / rate;
+      const how = await playChunk(pcm, rate);
+      if (first) { first = false; log(`first audio after ${((performance.now() - t0) / 1000).toFixed(2)}s (via ${how})`); window.__first = performance.now() - t0; }
+      log(`"${s.slice(0, 28)}…" ${dur.toFixed(1)}s audio in ${ms.toFixed(0)} ms (${(ms / 1000 / dur).toFixed(2)}x)`);
+      (window.__chunks = window.__chunks || []).push({ v: v.id, ms, dur });
+    }
+    status(`Done ✓ ${v.name}${full ? ' (full)' : ' (8-bit)'} – cached on this phone`);
+  } catch (e) { showErr(e.message || String(e)); }
+}
+function stop() { job++; srcs.forEach(s => { try { s.stop(); } catch {} }); srcs = []; try { el && el.pause(); } catch {} }
+$('stop').onclick = stop;
+$('clear').onclick = async () => { await piper.clearCache(); status('Downloaded voices cleared.'); };
+VOICES.forEach((v, i) => {
+  const d = document.createElement('div'); d.className = 'card row';
+  d.innerHTML = `<div class="t"><b>${v.name}${v.star ? ' <span class="star">★ closest to Heart</span>' : ''}</b><small>${v.desc}</small><i>${v.lic}</i></div><button>Play</button>`;
+  d.querySelector('button').onclick = () => play(v); $('voices').appendChild(d);
+});
+window.__play = (i) => play(VOICES[i]);
+</script></body></html>
