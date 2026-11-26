@@ -12,3 +12,8 @@
 - Default = Echo particle ghost (`e`) on the premium black UI (`4`), orange theme (`4` white/silver).
 - `?ghost=cute|a|b|c|d|e|f|g|h` · `?ui=1|2|3|4` · `?theme=1` orange · `2` icy cyan · `3` violet/magenta · `4` white/silver mono.
 - Change defaults via `DEFAULT_GHOST` / `DEFAULT_UI` in `js/main.js`.
+
+## Voice
+- Default: natural Gemini TTS (`gemini-3.8-flash-lite-tts`, falls back to `gemini-3.8-flash-tts`) via `POST /v1beta/interactions` with the same key; 12 prebuilt voices (default Aoede).
+- Falls back automatically to the best on-device voice (prefers Premium/Enhanced/Siri voices, skips robotic novelty voices), spoken sentence by sentence at natural rate/pitch.
+- Settings › Voice: choose engine + voice, "Test" button.

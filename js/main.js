@@ -1,5 +1,6 @@
 import { Ghost } from './ghost.js';
 import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js';
+import { Voice, GEMINI_VOICES, TTS_MODELS } from './voice.js';
 
 // ====== Easy-to-change settings ======
 const BOT_NAME = 'Echo';
@@ -10,7 +11,7 @@ Replies may be read aloud, so avoid markdown, tables, code blocks and long lists
 const MAX_TURNS = 24;   // messages kept in context
 // =====================================
 
-const LS = { key: 'ghost.geminiKey', model: 'ghost.model', lang: 'ghost.lang', mute: 'ghost.mute', persist: 'ghost.persist', hist: 'ghost.history' };
+const LS = { key: 'ghost.geminiKey', model: 'ghost.model', lang: 'ghost.lang', mute: 'ghost.mute', persist: 'ghost.persist', hist: 'ghost.history', engine: 'ghost.voiceEngine', gvoice: 'ghost.geminiVoice', dvoice: 'ghost.deviceVoice', ttsModel: 'ghost.ttsModel' };
 const ls = {
   get: (k, d = null) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
@@ -168,7 +169,7 @@ function onTapGhost() {
   if (!busy && now - lastTapMsg > 2500) {
     lastTapMsg = now;
     const line = T[lang].taps[tapIdx++ % T[lang].taps.length];
-    speak(line, { quick: true });
+    speak(line, { device: true });   // short tap reactions use the on-device voice (no API call)
   }
 }
 setTimeout(() => el.hint.classList.add('gone'), 6000);
@@ -256,7 +257,7 @@ async function send(text) {
   speak(reply);
   await streamMsg(reply, isErr ? 'err' : '');
   busy = false; el.send.disabled = false;
-  if (!(synth && synth.speaking) && !recognizing) setState('idle');
+  if (!voice.speaking && !recognizing) setState('idle');
 }
 
 // Typewriter-style reveal so replies "stream" in while the ghost glows/speaks.
@@ -279,52 +280,28 @@ async function streamMsg(text, cls) {
 el.form.addEventListener('submit', (e) => { e.preventDefault(); unlockAudio(); send(el.input.value); el.input.blur(); });
 
 // ---------- Speech output ----------
-const synth = 'speechSynthesis' in window ? window.speechSynthesis : null;
-let audioUnlocked = false, voices = [];
-function loadVoices() { voices = synth ? synth.getVoices() : []; }
-if (synth) { loadVoices(); synth.addEventListener?.('voiceschanged', loadVoices); }
-function unlockAudio() {
-  if (audioUnlocked || !synth) return;
-  audioUnlocked = true;
-  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; synth.speak(u); } catch {}  // iOS needs a speak() inside a user gesture
-}
-function pickVoice() {
-  const want = lang === 'id' ? 'id' : 'en';
-  const list = voices.filter(v => v.lang && v.lang.toLowerCase().replace('_', '-').startsWith(want));
-  const pref = lang === 'id' ? [/damayanti/i, /google.*indonesia/i] : [/samantha/i, /google us english/i, /karen/i, /daniel/i];
-  for (const re of pref) { const v = list.find(v => re.test(v.name)); if (v) return v; }
-  return list.find(v => v.localService) || list[0] || null;
-}
-function cleanForSpeech(s) {
-  return s.replace(/https?:\/\/\S+/g, '').replace(/[*_#`>~]/g, '')
-    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '').replace(/\s+/g, ' ').trim();
-}
+const voicePrefs = () => ({ engine: ls.get(LS.engine, 'gemini'), geminiVoice: ls.get(LS.gvoice, 'Aoede'), deviceVoice: ls.get(LS.dvoice, ''), ttsModel: ls.get(LS.ttsModel, TTS_MODELS[0]) });
+const voice = new Voice({
+  getKey, getPrefs: voicePrefs,
+  onLevel: (v) => { if (ghost) ghost.speakLevel = v; },
+  onStart: () => setState('speaking'),
+  onEnd: () => { if (ghost) ghost.speakLevel = 0; if (!busy && !recognizing) setState('idle'); },
+});
+function unlockAudio() { voice.unlock(); }
+// drive the ghost glow from the real audio level while the AI voice plays
+(function levelLoop() { if (voice.source && ghost) ghost.speakLevel = voice.level(); requestAnimationFrame(levelLoop); })();
 let speakTimer = null;
-function speak(text, { quick = false } = {}) {
-  const done = () => { if (ghost) ghost.speakLevel = 0; if (!busy && !recognizing) setState('idle'); };
-  if (muted || !synth) {
-    // still animate the mouth briefly so the ghost "talks"
+function speak(text, opts = {}) {
+  if (muted) {
+    // still animate the ghost briefly so it "talks"
     setState('speaking');
     clearTimeout(speakTimer);
-    speakTimer = setTimeout(done, Math.min(4000, 600 + text.length * 35));
+    speakTimer = setTimeout(() => { if (ghost) ghost.speakLevel = 0; if (!busy && !recognizing) setState('idle'); }, Math.min(4000, 600 + text.length * 35));
     return;
   }
-  try {
-    synth.cancel();
-    const u = new SpeechSynthesisUtterance(cleanForSpeech(text));
-    u.lang = lang === 'id' ? 'id-ID' : 'en-US';
-    const v = pickVoice(); if (v) u.voice = v;
-    u.rate = 1.03; u.pitch = 1.25;
-    u.onstart = () => setState('speaking');
-    u.onboundary = () => { if (ghost) { ghost.speakLevel = 1; setTimeout(() => ghost && (ghost.speakLevel = 0.3), 120); } };
-    u.onend = done; u.onerror = done;
-    setState('speaking');
-    synth.speak(u);
-    clearTimeout(speakTimer);
-    speakTimer = setTimeout(() => { if (!synth.speaking) done(); }, 1500 + text.length * 90);  // safety net (iOS sometimes skips onend)
-  } catch { done(); }
+  voice.speak(text, lang, opts);
 }
-function stopSpeaking() { try { synth?.cancel(); } catch {} clearTimeout(speakTimer); if (ghost) ghost.speakLevel = 0; }
+function stopSpeaking() { voice.stop(); clearTimeout(speakTimer); if (ghost) ghost.speakLevel = 0; }
 
 // ---------- Speech input ----------
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -367,7 +344,24 @@ el.lang.addEventListener('click', () => { lang = lang === 'en' ? 'id' : 'en'; ls
 
 // ---------- Settings sheet ----------
 for (const m of MODELS) { const o = document.createElement('option'); o.value = m.id; o.textContent = m.label; el.model.appendChild(o); }
+const vEl = { engine: $('engineSelect'), g: $('geminiVoiceSelect'), d: $('deviceVoiceSelect'), test: $('testVoiceBtn') };
+for (const [id, label] of GEMINI_VOICES) { const o = document.createElement('option'); o.value = id; o.textContent = label; vEl.g.appendChild(o); }
+function fillDeviceVoices() {
+  vEl.d.innerHTML = '';
+  const auto = document.createElement('option'); auto.value = ''; auto.textContent = 'Auto (best natural voice)'; vEl.d.appendChild(auto);
+  for (const v of voice.listDeviceVoices()) { const o = document.createElement('option'); o.value = v.voiceURI || v.name; o.textContent = `${v.name} (${v.lang})`; vEl.d.appendChild(o); }
+  vEl.d.value = ls.get(LS.dvoice, '');
+}
+function syncVoiceUI() { const dev = vEl.engine.value === 'device'; vEl.g.hidden = dev; vEl.d.hidden = !dev; }
+vEl.engine.addEventListener('change', syncVoiceUI);
+function saveVoicePrefs() { ls.set(LS.engine, vEl.engine.value); ls.set(LS.gvoice, vEl.g.value); ls.set(LS.dvoice, vEl.d.value); }
+vEl.test.addEventListener('click', () => {
+  unlockAudio(); saveVoicePrefs();
+  const k = el.key.value.trim(); if (k && k !== getKey()) ls.set(LS.key, k);
+  speak(lang === 'id' ? `Halo! Aku ${BOT_NAME}. Begini suaraku sekarang, lebih natural kan?` : `Hey! I'm ${BOT_NAME}. This is how I sound now. Pretty natural, right?`);
+});
 function openSheet() {
+  fillDeviceVoices(); vEl.engine.value = ls.get(LS.engine, 'gemini'); vEl.g.value = ls.get(LS.gvoice, 'Aoede'); syncVoiceUI();
   el.key.value = getKey(); el.key.type = 'password'; el.showKey.textContent = 'Show';
   el.model.value = getModel(); el.persist.checked = ls.get(LS.persist) === '1';
   el.sheet.hidden = false; el.backdrop.hidden = false;
@@ -381,6 +375,7 @@ el.save.addEventListener('click', () => {
   const had = !!getKey();
   if (k) ls.set(LS.key, k); else ls.del(LS.key);
   ls.set(LS.model, el.model.value);
+  saveVoicePrefs();
   ls.set(LS.persist, el.persist.checked ? '1' : '0');
   if (el.persist.checked) saveHistory(); else ls.del(LS.hist);
   closeSheet(); updateChip();

@@ -81,6 +81,19 @@
       <span>Model</span>
       <select id="modelSelect"></select>
     </label>
+    <div class="field">
+      <span>Voice</span>
+      <select id="engineSelect">
+        <option value="gemini">Natural AI voice (Gemini)</option>
+        <option value="device">iPhone voice (offline)</option>
+      </select>
+      <div class="keyrow" style="margin-top:8px">
+        <select id="geminiVoiceSelect" aria-label="AI voice"></select>
+        <select id="deviceVoiceSelect" aria-label="iPhone voice" hidden></select>
+        <button type="button" class="ghost-btn" id="testVoiceBtn">Test</button>
+      </div>
+      <small id="voiceTip">The AI voice needs your Gemini key; without it Echo uses the best iPhone voice. For a more natural iPhone voice, download one in Settings › Accessibility › Spoken Content › Voices (e.g. English › Ava or Zoe “Enhanced/Premium”, Indonesian › Damayanti).</small>
+    </div>
     <label class="field row">
       <span>Remember chat on this phone</span>
       <input type="checkbox" id="persistChk">
