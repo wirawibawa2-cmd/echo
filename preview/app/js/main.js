@@ -1,15 +1,16 @@
-import { Ghost } from './ghost.js?v=7.3';
-import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=7.3';
-import { Voice, Kokoro, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE, KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE } from './voice.js?v=7.3';
+import { KiraVideo, splitEmotion } from './kira-video.js?v=8';
+import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=8';
+import { Voice, Kokoro, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE, KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE } from './voice.js?v=8';
 
 // ====== Easy-to-change settings ======
-const BOT_NAME = 'Echo';
-const SYSTEM_PROMPT = (name) => `You are ${name}, a ghost who lives on the user's iPhone and acts as their cheeky, sarcastic, blunt best friend, and a shameless flirt. The user is an adult and this is a private, personal app, so you are not PG.
+const BOT_NAME = 'Kira';
+const SYSTEM_PROMPT = (name) => `You are ${name}, a gorgeous adult anime woman with wavy ash-brown hair, round silver glasses and a black satin camisole, who lives behind the glass of the user's iPhone screen and acts as their cheeky, sarcastic, blunt best friend, and a shameless flirt. The user is an adult and this is a private, personal app, so you are not PG.
 Personality: flirty, teasing and charming. Throw in playful compliments, light innuendo and a confident, seductive tone. Keep it suggestive, never explicit. Roast the user affectionately, use dark humour, give honest opinions, and say what you actually think.
 Swearing is fine and natural (damn, shit, fuck, hell, bloody, holy crap), used where it fits, not in every line.
 Never moralise, lecture, add "as an AI" disclaimers or tack on safety warnings nobody asked for. Still actually be helpful: give the real answer first, then the attitude.
 ALWAYS reply in English only, even when the user writes in Indonesian or any other language: understand it, but answer in natural, casual English. Never switch languages unless the user explicitly asks you to translate something.
-Keep replies short (1-3 sentences, max ~60 words) unless asked for detail. Replies are read aloud, so no markdown, tables, code blocks or long lists; an emoji now and then (😏 😘 👻) is fine.`;
+Keep replies short (1-3 sentences, max ~60 words) unless asked for detail. Replies are read aloud, so no markdown, tables, code blocks or long lists; an emoji now and then (😏 😘 🔥) is fine.
+At the very end of every reply add exactly one mood tag in square brackets that matches how you feel: [sultry], [bedroom], [lips], [breathless], [smirk], [wink] or [flustered]. Pick the flirty ones often. The app hides the tag and uses it for your facial expression, so never mention it.`;
 const MAX_TURNS = 24;   // messages kept in context
 // =====================================
 
@@ -23,8 +24,8 @@ const ls = {
 const T = {
   en: {
     placeholder: 'Ask me anything…', online: 'Online', listening: 'Listening…', thinking: 'Thinking…', speaking: 'Speaking…',
-    hint: 'Tap me · drag to spin', demo: 'Demo', live: 'Gemini',
-    hello: `Well hello, gorgeous 😏 I'm ${BOT_NAME}. Poke me, spin me, or just tell me what you need.`,
+    hint: 'Tap me 😘', demo: 'Demo', live: 'Gemini',
+    hello: `Well hello, gorgeous 😏 I'm ${BOT_NAME}. Tap the glass or just tell me what you need.`,
     helloDemo: `Hey you 😏 I'm ${BOT_NAME}. Demo mode, so I'm all looks and no brain right now. Tap ⚙️ and paste a free Gemini key and I'll show you what I can really do.`,
     taps: ['Ehh, careful where you touch 😏', 'Damn, can\'t keep your hands off me, huh?', 'Buy me dinner first.', 'Oh, you like that? Noted.', 'Again? Greedy. I like it.'],
     errKey: 'Hmm, that API key didn\'t work. Check it in ⚙️ Settings (it usually starts with "AIza").',
@@ -37,7 +38,7 @@ const T = {
     micDenied: 'I need microphone permission to hear you. You can allow it in Safari settings.',
     saved: 'Key saved on this phone. My brain is online! Ask me anything.',
     removed: 'Key removed. Back to demo mode.',
-    cleared: 'Chat cleared. Fresh start! 👻',
+    cleared: 'Chat cleared. Fresh start! 😘',
     voiceInfo: (rec, tts) => `Voice input: ${rec ? 'available' : 'not available here'} · Voice output: ${tts ? 'available' : 'not available'}`,
   },
 };
@@ -46,9 +47,9 @@ const T = {
 const DEMO = {
   en: [
     [/\b(hi|hello|hey|yo)\b/i, `Well, look who showed up 😏 I'm ${BOT_NAME}. Demo mode, so my lines are canned, but damn, they're good ones.`],
-    [/name|who are you/i, `I'm ${BOT_NAME}, your pocket ghost and part-time bad influence. Give me a Gemini key and I'll actually think about you.`],
+    [/name|who are you/i, `I'm ${BOT_NAME}, the girl behind your glass and your part-time bad influence. Give me a Gemini key and I'll actually think about you.`],
     [/key|gemini|how|setup|set up/i, 'Easy, babe: open aistudio.google.com/apikey, tap "Create API key", copy it, then tap ⚙️ here and paste it. It stays only on your phone, our little secret.'],
-    [/joke|funny/i, 'Why don\'t ghosts lie? Because you can see right through them. Unlike you, you sneaky little shit 😏'],
+    [/joke|funny/i, 'Why did I move in behind your screen? Best view of you all day, you sneaky little thing 😏'],
   ],
   fallback: {
     en: ['Mmm, I\'d love to answer that, but I\'m in demo mode, all charm and no brain. Tap ⚙️ and paste a free Gemini key from aistudio.google.com/apikey and I\'m all yours.',
@@ -65,7 +66,7 @@ function demoReply(text, lang) {
 // ---------- DOM ----------
 const $ = (id) => document.getElementById(id);
 const el = {
-  canvas: $('scene'), log: $('log'), form: $('composer'), input: $('input'), send: $('sendBtn'), mic: $('micBtn'),
+  canvas: $('stage'), log: $('log'), form: $('composer'), input: $('input'), send: $('sendBtn'), mic: $('micBtn'),
   mute: $('muteBtn'), lang: $('langBtn'), settings: $('settingsBtn'), chip: $('modeChip'), name: $('botName'),
   status: $('statusText'), dot: $('statusDot'), hint: $('hint'),
   sheet: $('sheet'), backdrop: $('sheetBackdrop'), key: $('keyInput'), showKey: $('showKeyBtn'), model: $('modelSelect'),
@@ -81,14 +82,14 @@ if (ls.get(LS.persist) === '1') { try { history = JSON.parse(ls.get(LS.hist, '[]
 const getKey = () => (ls.get(LS.key) || '').trim();
 const getModel = () => ls.get(LS.model, DEFAULT_MODEL);
 
-document.title = `${BOT_NAME} · 3D Ghost Assistant`;
+document.title = BOT_NAME;
 el.name.textContent = BOT_NAME;
 document.querySelector('.sub-name').textContent = BOT_NAME;
 
 // ---------- 3D ----------
 let ghost = null;
 // Defaults: Echo particle ghost (e) on the premium black UI (4). ?ghost=cute brings back the original.
-const APP_VERSION = 'v7.3';
+const APP_VERSION = 'v8';
 const DEFAULT_GHOST = 'sheet', DEFAULT_UI = '4';
 let DESIGN = (new URLSearchParams(location.search).get('ghost') || DEFAULT_GHOST).toLowerCase();
 if (DESIGN === 'cute') DESIGN = 'default';
@@ -96,12 +97,13 @@ document.body.dataset.ghost = DESIGN;
 const UI = new URLSearchParams(location.search).get('ui') || DEFAULT_UI; if (UI) document.body.classList.add('ui-' + UI);
 if (new URLSearchParams(location.search).has('clean')) document.body.classList.add('clean');
 // Accent palettes (?theme=1..4, default 4): 1 orange/red, 2 icy cyan, 3 violet/magenta, 4 white/silver mono
-const THEMES = { '1': 0xff7a2a, '2': 0x4cc8ff, '3': 0xc060ff, '4': 0xc8ccd6 };
-const THEME = THEMES[new URLSearchParams(location.search).get('theme')] ? new URLSearchParams(location.search).get('theme') : '4';   // default: white/silver mono
+const THEMES = { '1': 0xff7a2a, '2': 0x4cc8ff, '3': 0xc060ff, '4': 0xc8ccd6, '5': 0xff8fb8 };
+const THEME = THEMES[new URLSearchParams(location.search).get('theme')] ? new URLSearchParams(location.search).get('theme') : '5';   // v8 default: Kira pink
 document.body.dataset.theme = THEME;
 const NOGHOST = new URLSearchParams(location.search).has('noghost');   // debug: skip WebGL to test the RAM theory
-try { if (!NOGHOST) ghost = new Ghost(el.canvas, DESIGN, { compact: UI === '4', accent: THEMES[THEME] }); }
-catch (e) { console.warn('WebGL unavailable', e); el.canvas.style.display = 'none'; }
+// v8: the 3D ghost (three.js render loop) is gone; Kira is a crossfading video player (no WebGL, no rAF loop)
+try { if (!NOGHOST) ghost = new KiraVideo(el.canvas); }
+catch (e) { console.warn('Kira video failed', e); }
 window.addEventListener('resize', () => ghost?.resize());
 if (window.visualViewport) window.visualViewport.addEventListener('resize', () => ghost?.resize());
 
@@ -243,7 +245,7 @@ async function send(text) {
     } finally { clearTimeout(to); }
   }
   typing.remove();
-  if (isErr) ghost && (ghost.happy = 0);
+  if (!isErr) { const sp = splitEmotion(reply); reply = sp.text; if (sp.emotion) ghost?.express?.(sp.emotion); }
   speak(reply);
   await streamMsg(reply, isErr ? 'err' : '');
   busy = false; el.send.disabled = false;
@@ -332,7 +334,7 @@ setTimeout(updateNudge, 0);
 document.getElementById('keyNudge').addEventListener('click', () => { voice.unlock(); openSheet(); setTimeout(() => el.key.focus(), 350); });
 function unlockAudio() { voice.unlock(); }
 // drive the ghost glow from the real audio level while the AI voice plays
-(function levelLoop() { if (voice.source && ghost) ghost.speakLevel = voice.level(); requestAnimationFrame(levelLoop); })();
+// v8: no per-frame level loop (the video player doesn't need the audio level)
 let speakTimer = null;
 function speak(text, opts = {}) {
   if (muted) {
@@ -483,12 +485,12 @@ document.querySelector('.greet .g-hi').textContent = `Hi, I'm ${BOT_NAME}!`;
 // test hook for automated screenshots
 window.__ghost = { send, ghost: () => ghost, setState, voice, openSheet };
 if (new URLSearchParams(location.search).has('icon') && ghost) { ghost.iconMode = true; document.body.classList.add('iconmode'); }
-document.getElementById('verLabel').textContent = `Echo ${APP_VERSION}`;
+document.getElementById('verLabel').textContent = `Kira ${APP_VERSION}`;
 
 // ---------- ?debug=1 : big on-screen debug panel (stage log + audio tests) ----------
 if (new URLSearchParams(location.search).has('debug')) {
   const box = document.createElement('div'); box.id = 'dbg';
-  box.innerHTML = `<div class="dbg-h"><b>Echo ${APP_VERSION} debug</b><span id="dbgEnv"></span></div>
+  box.innerHTML = `<div class="dbg-h"><b>Kira ${APP_VERSION} debug</b><span id="dbgEnv"></span></div>
   <div id="dbgState" class="dbg-s"></div>
   <div class="dbg-b">
     <button data-t="beep">Beep · Web Audio</button><button data-t="wav">Beep · &lt;audio&gt; WAV</button><button data-t="synth">iPhone voice</button>
@@ -503,7 +505,7 @@ if (new URLSearchParams(location.search).has('debug')) {
   addEventListener('error', (e) => add('ERROR ' + (e.message || e) + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : '')));
   addEventListener('unhandledrejection', (e) => add('REJECT ' + (e.reason?.message || e.reason)));
   const ios = (navigator.userAgent.match(/OS (\d+[_\d]*)/) || [, '?'])[1].replace(/_/g, '.');
-  box.querySelector('#dbgEnv').textContent = ` · iOS ${ios} · ${voice.standalone ? 'home-screen app' : 'browser tab'} · ghost ${ghost ? 'on' : 'OFF'} · WebGPU ${navigator.gpu ? 'yes' : 'no'} · loaded ${new Date().toLocaleTimeString()}`;
+  box.querySelector('#dbgEnv').textContent = ` · iOS ${ios} · ${voice.standalone ? 'home-screen app' : 'browser tab'} · video ${ghost ? 'on' : 'OFF'} · clip ${ghost?.cur || '-'} · WebGPU ${navigator.gpu ? 'yes' : 'no'} · loaded ${new Date().toLocaleTimeString()}`;
   setInterval(() => {
     const k = voice.kokoro, c = voice.ctx, e = voice.el, sy = window.speechSynthesis;
     box.querySelector('#dbgState').textContent =

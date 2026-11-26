@@ -1,7 +1,7 @@
 // Echo voice output (v7): free on-device Kokoro "Heart" voice first, then Gemini TTS (user's own key), then the iPhone voice.
-import { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE, KOKORO_CACHE, KOKORO_HF } from './kokoro-config.js?v=7.3';
+import { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE, KOKORO_CACHE, KOKORO_HF } from './kokoro-config.js?v=8';
 export { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE };
-import { Heart, chunks as heartChunks } from './heart-engine.js?v=7.3';
+import { Heart, chunks as heartChunks } from './heart-engine.js?v=8';
 const TTS_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 export const TTS_MODELS = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
 export const GEMINI_VOICES = [
