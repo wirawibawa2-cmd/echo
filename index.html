@@ -9,10 +9,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Echo">
-<link rel="apple-touch-icon" href="assets/icon-180.png?v=4">
-<link rel="icon" href="assets/icon-192.png?v=4">
-<link rel="manifest" href="manifest.webmanifest?v=4">
-<link rel="stylesheet" href="css/style.css?v=4">
+<link rel="apple-touch-icon" href="assets/icon-180.png?v=5">
+<link rel="icon" href="assets/icon-192.png?v=5">
+<link rel="manifest" href="manifest.webmanifest?v=5">
+<link rel="stylesheet" href="css/style.css?v=5">
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
 </head>
 <body>
@@ -40,6 +40,7 @@
     </div>
   </header>
 
+  <button type="button" class="key-nudge" id="keyNudge" hidden>🔑 Paste your Gemini key in ⚙️ for the natural AI voice</button>
   <div class="hint" id="hint">Tap me · drag to spin</div>
 
   <div class="greet"><div class="g-hi">Hi, I'm Echo!</div><h1>How can I help<br>you today?</h1></div>
@@ -93,7 +94,7 @@
         <button type="button" class="ghost-btn" id="testVoiceBtn">Test</button>
       </div>
       <div class="using" id="voiceUsing">Using: …</div>
-      <small id="voiceTip">The AI voice needs your Gemini key; without it Echo uses the best iPhone voice. For a more natural iPhone voice, download one in Settings › Accessibility › Spoken Content › Voices (e.g. English › Ava or Zoe “Enhanced/Premium”, Indonesian › Damayanti).</small>
+      <small id="voiceTip">The AI voice needs your Gemini key; without it Echo uses the iPhone backup voice. The home-screen app keeps its own storage, so paste the key there too. For a more natural iPhone voice, download one in Settings › Accessibility › Spoken Content › Voices (e.g. English › Ava or Zoe “Enhanced/Premium”, Indonesian › Damayanti).</small>
     </div>
     <label class="field row">
       <span>Remember chat on this phone</span>
@@ -108,6 +109,6 @@
     <p class="fine ver" id="verLabel"></p>
   </form>
 </div>
-<script type="module" src="js/main.js?v=4"></script>
+<script type="module" src="js/main.js?v=5"></script>
 </body>
 </html>

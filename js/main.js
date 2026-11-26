@@ -1,6 +1,6 @@
-import { Ghost } from './ghost.js?v=4';
-import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=4';
-import { Voice, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE } from './voice.js?v=4';
+import { Ghost } from './ghost.js?v=5';
+import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=5';
+import { Voice, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE } from './voice.js?v=5';
 
 // ====== Easy-to-change settings ======
 const BOT_NAME = 'Echo';
@@ -117,7 +117,7 @@ document.querySelector('.sub-name').textContent = BOT_NAME;
 // ---------- 3D ----------
 let ghost = null;
 // Defaults: Echo particle ghost (e) on the premium black UI (4). ?ghost=cute brings back the original.
-const APP_VERSION = 'v4';
+const APP_VERSION = 'v5';
 const DEFAULT_GHOST = 'sheet', DEFAULT_UI = '4';
 let DESIGN = (new URLSearchParams(location.search).get('ghost') || DEFAULT_GHOST).toLowerCase();
 if (DESIGN === 'cute') DESIGN = 'default';
@@ -210,6 +210,7 @@ function applyLang() {
 }
 function updateChip() {
   const live = !!getKey();
+  updateNudge();
   el.chip.textContent = live ? T[lang].live : T[lang].demo;
   el.chip.classList.toggle('live', live);
 }
@@ -305,7 +306,14 @@ const voice = new Voice({
   onLevel: (v) => { if (ghost) ghost.speakLevel = v; },
   onStart: () => { setState('speaking'); if (!el.sheet.hidden) showUsing(); },
   onEnd: () => { if (ghost) ghost.speakLevel = 0; if (!busy && !recognizing) setState('idle'); },
+  onStatus: () => { if (!el.sheet.hidden) showUsing(); },
 });
+// iOS (Safari and the home-screen app) only unlocks audio inside a real gesture; touchend/click count, touchstart/pointerdown may not.
+// Re-run on every gesture so a context that iOS suspended (app switch, call, Siri) gets resumed.
+for (const ev of ['touchend', 'click', 'pointerup', 'keydown']) document.addEventListener(ev, () => voice.unlock(), { capture: true, passive: true });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && voice.ctx && voice.ctx.state !== 'running') voice.ctx.resume?.().catch?.(() => {}); });
+setTimeout(updateNudge, 0);
+document.getElementById('keyNudge').addEventListener('click', () => { voice.unlock(); openSheet(); setTimeout(() => el.key.focus(), 350); });
 function unlockAudio() { voice.unlock(); }
 // drive the ghost glow from the real audio level while the AI voice plays
 (function levelLoop() { if (voice.source && ghost) ghost.speakLevel = voice.level(); requestAnimationFrame(levelLoop); })();
@@ -381,7 +389,21 @@ vEl.test.addEventListener('click', () => {
   const k = el.key.value.trim(); if (k && k !== getKey()) ls.set(LS.key, k);
   speak(lang === 'id' ? `Halo! Aku ${BOT_NAME}. Begini suaraku sekarang, lebih natural kan?` : `Hey! I'm ${BOT_NAME}. This is how I sound now. Pretty natural, right?`);
 });
-function showUsing() { document.getElementById('voiceUsing').textContent = 'Using: ' + voice.describe(lang); }
+function showUsing() {
+  const u = document.getElementById('voiceUsing'); if (!u) return;
+  const txt = muted ? 'Muted (tap the speaker button to unmute)' : voice.describe(lang);
+  u.textContent = 'Using: ' + txt;
+  u.classList.toggle('warn', muted || /backup voice|locked|error|No speech/i.test(txt));
+}
+function updateNudge() {
+  const n = document.getElementById('keyNudge'); if (!n) return;
+  const no = !getKey();
+  n.hidden = !no;
+  let sa = false; try { sa = voice.standalone; } catch {}
+  n.textContent = lang === 'id'
+    ? (sa ? '🔑 App layar utama punya penyimpanan sendiri. Tempel API key Gemini di ⚙️' : '🔑 Tempel API key Gemini di ⚙️ biar suaranya natural')
+    : (sa ? '🔑 Home-screen app = separate storage. Paste your Gemini key in ⚙️ for the AI voice' : '🔑 Paste your Gemini key in ⚙️ for the natural AI voice');
+}
 function openSheet() {
   setTimeout(showUsing, 0);
   fillDeviceVoices(); vEl.engine.value = ls.get(LS.engine, 'gemini'); vEl.g.value = ls.get(LS.gvoice, DEFAULT_GEMINI_VOICE); syncVoiceUI();
@@ -401,10 +423,11 @@ el.save.addEventListener('click', () => {
   saveVoicePrefs();
   ls.set(LS.persist, el.persist.checked ? '1' : '0');
   if (el.persist.checked) saveHistory(); else ls.del(LS.hist);
+  voice.lastUsed = ''; voice.lastReason = ''; voice.ttsFailUntil = 0;
   closeSheet(); updateChip();
   if (k && !had) { addMsg('bot', T[lang].saved); ghost?.react(); }
 });
-el.clearKey.addEventListener('click', () => { ls.del(LS.key); el.key.value = ''; updateChip(); closeSheet(); addMsg('bot', T[lang].removed); });
+el.clearKey.addEventListener('click', () => { ls.del(LS.key); voice.lastUsed = ''; el.key.value = ''; updateChip(); closeSheet(); addMsg('bot', T[lang].removed); });
 el.clearChat.addEventListener('click', () => { history = []; ls.del(LS.hist); el.log.innerHTML = ''; closeSheet(); addMsg('bot', T[lang].cleared); });
 
 // ---------- Boot ----------

@@ -51,46 +51,106 @@ function cleanForSpeech(s) {
 }
 function sentences(s) { return (s.match(/[^.!?…]+[.!?…]*\s*/g) || [s]).map(x => x.trim()).filter(Boolean); }
 
+const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const DEV = IOS ? 'iPhone' : 'Device';
+const STANDALONE = (() => { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch { return false; } })();
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const withTimeout = (p, ms) => Promise.race([Promise.resolve(p).catch(() => {}), sleep(ms)]);
+
+// 16-bit PCM WAV (or raw L16 @24 kHz) -> mono Float32 samples. Done by hand: decodeAudioData is flaky on iOS.
+export function decodePCM(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let rate = 24000, ch = 1, off = 0, len = bytes.byteLength;
+  if (bytes.byteLength > 12 && dv.getUint32(0, false) === 0x52494646 /* RIFF */) {
+    let p = 12; off = -1;
+    while (p + 8 <= bytes.byteLength) {
+      const id = dv.getUint32(p, false), sz = dv.getUint32(p + 4, true);
+      if (id === 0x666d7420 /* fmt  */) { ch = dv.getUint16(p + 10, true); rate = dv.getUint32(p + 12, true); }
+      if (id === 0x64617461 /* data */) { off = p + 8; len = Math.min(sz, bytes.byteLength - off); break; }
+      p += 8 + sz + (sz & 1);
+    }
+    if (off < 0) throw new Error('bad WAV');
+  }
+  const n = Math.floor(len / 2 / ch), out = new Float32Array(n);
+  for (let i = 0; i < n; i++) out[i] = dv.getInt16(off + i * 2 * ch, true) / 32768;
+  return { samples: out, rate };
+}
+function wavBlob(samples, rate) {
+  const b = new ArrayBuffer(44 + samples.length * 2), v = new DataView(b);
+  const w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true);
+  v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, samples.length * 2, true);
+  for (let i = 0; i < samples.length; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, samples[i])) * 32767, true);
+  return new Blob([b], { type: 'audio/wav' });
+}
+const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+
 export class Voice {
-  constructor({ getKey, getPrefs, onLevel, onStart, onEnd }) {
-    Object.assign(this, { getKey, getPrefs, onLevel, onStart, onEnd });
+  constructor({ getKey, getPrefs, onLevel, onStart, onEnd, onStatus }) {
+    Object.assign(this, { getKey, getPrefs, onLevel, onStart, onEnd, onStatus });
     this.synth = 'speechSynthesis' in window ? window.speechSynthesis : null;
     this.voices = [];
-    this.ctx = null; this.analyser = null; this.source = null;
-    this.unlocked = false; this.speaking = false; this.token = 0; this.ttsFailUntil = 0;
+    this.ctx = null; this.analyser = null; this.source = null; this.el = null;
+    this.unlocked = false; this.synthPrimed = false; this.speaking = false; this.token = 0; this.ttsFailUntil = 0;
+    this.lastUsed = ''; this.lastReason = ''; this._utts = [];
+    this.standalone = STANDALONE;
     if (this.synth) {
-      const load = () => { this.voices = this.synth.getVoices(); };
+      const load = () => { const v = this.synth.getVoices(); if (v.length) this.voices = v; };
       load(); this.synth.addEventListener?.('voiceschanged', load);
+      if ('onvoiceschanged' in this.synth && !this.synth.onvoiceschanged) this.synth.onvoiceschanged = load;
     }
     try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}   // iOS: play even with the silent switch on
   }
 
-  // Must be called inside a user gesture (tap) – unlocks Web Audio and speechSynthesis on iOS.
+  // Call from EVERY user gesture (touchend/click/keydown). iOS only unlocks audio inside a real gesture,
+  // and a context can fall back to "suspended"/"interrupted" later (app switch, call, Siri), so re-resume each time.
   unlock() {
-    if (this.unlocked) return;
-    this.unlocked = true;
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
-      if (AC) {
+      if (AC && !this.ctx) {
         this.ctx = new AC();
-        const b = this.ctx.createBuffer(1, 1, 22050), s = this.ctx.createBufferSource();
-        s.buffer = b; s.connect(this.ctx.destination); s.start(0);
-        this.ctx.resume?.();
         this.analyser = this.ctx.createAnalyser(); this.analyser.fftSize = 512; this.analyser.connect(this.ctx.destination);
         this._buf = new Uint8Array(this.analyser.fftSize);
+        this.ctx.onstatechange = () => this.onStatus?.();
+      }
+      if (this.ctx && this.ctx.state !== 'running') {
+        this.ctx.resume?.();
+        const b = this.ctx.createBuffer(1, 1, 22050), s = this.ctx.createBufferSource();
+        s.buffer = b; s.connect(this.ctx.destination); s.start(0);
+      }
+    } catch (e) { this.lastReason = 'audio unlock failed: ' + (e.message || e); }
+    try {   // a primed <audio> element is the second route for the AI voice if Web Audio stays locked
+      if (!this.el) { this.el = new Audio(); this.el.setAttribute('playsinline', ''); this.el.preload = 'auto'; }
+      if (!this.unlocked) { this.el.src = SILENT_WAV; const pr = this.el.play(); pr?.catch?.(() => {}); }
+    } catch {}
+    try {   // speechSynthesis must speak once inside a gesture on iOS; a whitespace-only utterance can be ignored
+      if (this.synth && !this.synthPrimed && !this.speaking) {
+        this.synthPrimed = true;
+        const u = new SpeechSynthesisUtterance('.'); u.volume = 0; u.rate = 2; this._utts.push(u); this.synth.speak(u);
       }
     } catch {}
-    try { if (this.synth) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; this.synth.speak(u); } } catch {}
+    this.unlocked = true;
   }
 
-  // Human-readable name of the voice that will be / was used.
+  audioState() { return this.ctx ? this.ctx.state : 'none'; }
+
+  // Human-readable "Using: …" text: the voice actually used (or about to be) and why the backup voice is used.
   describe(lang) {
+    const p = this.getPrefs(), key = this.getKey();
     if (this.lastUsed) return this.lastUsed;
-    const p = this.getPrefs();
-    if (p.engine !== 'device' && this.getKey() && Date.now() > this.ttsFailUntil) return `Gemini ${p.geminiVoice || DEFAULT_GEMINI_VOICE}`;
+    if (p.engine !== 'device' && key && Date.now() > this.ttsFailUntil) return `Gemini ${p.geminiVoice || DEFAULT_GEMINI_VOICE} (AI voice)`;
+    return this._backupLabel(lang, this._reason(key, p));
+  }
+  _reason(key, p) {
+    if (p.engine === 'device') return 'you picked the iPhone voice';
+    if (!key) return this.standalone ? 'no Gemini key in this home-screen app (it has its own storage – paste the key in ⚙️ here)' : 'no Gemini key – paste it in ⚙️';
+    if (Date.now() < this.ttsFailUntil && this.lastReason) return this.lastReason + ' (retrying in a few min)';
+    return this.lastReason || 'Gemini voice unavailable';
+  }
+  _backupLabel(lang, reason) {
     const v = this.bestDeviceVoice(lang);
-    const dev = /iPhone|iPad|Macintosh/.test(navigator.userAgent) ? 'iPhone' : 'Device';
-    return v ? `${dev} – ${v.name}${p.engine !== 'device' && !this.getKey() ? ' (add a Gemini key for the AI voice)' : ''}` : `${dev} default voice`;
+    return `${DEV} backup voice${v ? ' – ' + v.name : ''} · reason: ${reason}`;
   }
 
   bestDeviceVoice(lang) {
@@ -119,11 +179,12 @@ export class Voice {
     this.token++;
     try { this.source?.stop(); } catch {}
     this.source = null;
-    try { this.synth?.cancel(); } catch {}
+    try { if (this.el && !this.el.paused) this.el.pause(); } catch {}
+    try { if (this.synth && (this.synth.speaking || this.synth.pending)) this.synth.cancel(); } catch {}
     this._finish(true);
   }
 
-  _finish(silent) { if (this.speaking) { this.speaking = false; if (!silent) this.onEnd?.(); else this.onEnd?.(); } }
+  _finish() { if (this.speaking) { this.speaking = false; this.onEnd?.(); } this.onStatus?.(); }
 
   async speak(text, uiLang, opts = {}) {
     this.stop();
@@ -131,25 +192,28 @@ export class Voice {
     const clean = cleanForSpeech(text);
     if (!clean) return;
     const lang = detectLang(clean, uiLang);
-    const prefs = this.getPrefs();
-    const useGemini = !opts.device && prefs.engine !== 'device' && this.getKey() && this.ctx && Date.now() > this.ttsFailUntil;
+    const prefs = this.getPrefs(), key = this.getKey();
+    const wantGemini = !opts.device && prefs.engine !== 'device' && !!key;
     this.speaking = true; this.onStart?.();
-    if (useGemini) {
-      try { await this._speakGemini(clean, tok, prefs); this.lastUsed = `Gemini ${prefs.geminiVoice || DEFAULT_GEMINI_VOICE}`; return; }
+    if (wantGemini && Date.now() > this.ttsFailUntil) {
+      try { await this._speakGemini(clean, tok, prefs); if (tok === this.token || !this.speaking) { this.lastUsed = `Gemini ${prefs.geminiVoice || DEFAULT_GEMINI_VOICE} (AI voice)`; this.lastReason = ''; this.onStatus?.(); } return; }
       catch (e) {
         if (tok !== this.token) return;
-        console.warn('Gemini TTS unavailable, using device voice:', e.message || e);
-        if (e.status === 429 || e.status === 403 || e.status === 404) this.ttsFailUntil = Date.now() + 5 * 60 * 1000;
+        this.lastReason = e.reason || ('Gemini voice error: ' + (e.message || e));
+        console.warn('Gemini TTS unavailable, using device voice:', this.lastReason);
+        if (e.status === 429 || e.status === 403 || e.status === 404 || e.status === 400) this.ttsFailUntil = Date.now() + 3 * 60 * 1000;
       }
     }
     if (tok !== this.token) return;
-    await this._speakDevice(clean, lang, tok);
+    const reason = opts.device ? 'short tap line (always iPhone voice)' : this._reason(key, prefs);
+    await this._speakDevice(clean, lang, tok, reason);
   }
 
   async _speakGemini(text, tok, prefs) {
     const key = this.getKey();
     let lastErr;
-    for (const model of [prefs.ttsModel || TTS_MODELS[0], ...TTS_MODELS.filter(m => m !== prefs.ttsModel)]) {
+    const fail = (msg, status, reason) => { const e = new Error(msg); e.status = status; e.reason = reason || msg; return e; };
+    for (const model of [prefs.ttsModel || TTS_MODELS[0], ...TTS_MODELS.filter(m => m !== (prefs.ttsModel || TTS_MODELS[0]))]) {
       const ctrl = new AbortController(); const to = setTimeout(() => ctrl.abort(), 20000);
       let res;
       try {
@@ -163,40 +227,83 @@ export class Voice {
             generation_config: { speech_config: [{ voice: prefs.geminiVoice || DEFAULT_GEMINI_VOICE }] },
           }),
         });
-      } finally { clearTimeout(to); }
+      } catch (e) { clearTimeout(to); lastErr = fail(e.name === 'AbortError' ? 'timeout' : 'network', 0, e.name === 'AbortError' ? 'Gemini voice timed out' : 'no connection to Gemini voice'); continue; }
+      clearTimeout(to);
       if (tok !== this.token) return;
       if (!res.ok) {
         const body = await res.text().catch(() => '');
-        const err = new Error(`TTS ${res.status}`); err.status = res.status; lastErr = err;
-        if (/API_KEY_INVALID|API key not valid/i.test(body)) throw err;   // bad key: don't retry
-        if (res.status === 404 || res.status === 400) continue;    // model unavailable: try the other TTS model
-        throw err;
+        let msg = ''; try { msg = JSON.parse(body)?.error?.message || ''; } catch {}
+        const st = res.status;
+        const why = /API_KEY_INVALID|API key not valid/i.test(body) ? 'Gemini key rejected' : st === 429 ? 'Gemini voice quota hit (429)' : st === 403 ? 'Gemini voice not allowed for this key (403)' : st === 404 ? `TTS model ${model} not found (404)` : `Gemini voice error ${st}${msg ? ': ' + msg.slice(0, 80) : ''}`;
+        lastErr = fail(`TTS ${st}`, st, why);
+        if (/API_KEY_INVALID|API key not valid/i.test(body) || st === 429 || st === 403) throw lastErr;   // other model won't help
+        continue;
       }
-      const data = await res.json();
-      const steps = Array.isArray(data) ? data.flatMap(d => d.steps || []) : (data.steps || []);
-      const audio = steps.filter(s => s.type === 'model_output').flatMap(s => s.content || []).filter(c => c.type === 'audio').pop();
-      if (!audio?.data) { lastErr = new Error('no audio'); continue; }
-      const bytes = Uint8Array.from(atob(audio.data), c => c.charCodeAt(0));
-      const buf = await this.ctx.decodeAudioData(bytes.buffer.slice(0));
+      const data = await res.json().catch(() => null);
+      const steps = Array.isArray(data) ? data.flatMap(d => d.steps || []) : (data?.steps || []);
+      // audio lives in steps[].content[].data (base64); don't depend on the exact step type name
+      const parts = [...steps.flatMap(s => s.content || []), ...(data?.output_audio ? [data.output_audio] : []), ...(data?.outputs || [])];
+      const audio = parts.filter(c => c && c.data && (c.type === 'audio' || /audio/.test(c.mime_type || c.mimeType || ''))).pop();
+      if (!audio) { lastErr = fail('no audio', 0, 'Gemini voice returned no audio'); continue; }
+      const bin = atob(audio.data), bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const { samples, rate } = decodePCM(bytes);
+      if (!samples.length) { lastErr = fail('empty audio', 0, 'Gemini voice returned empty audio'); continue; }
       if (tok !== this.token) return;
-      await this.ctx.resume?.();
-      await new Promise((resolve) => {
-        const src = this.ctx.createBufferSource(); src.buffer = buf; src.connect(this.analyser);
-        src.onended = () => { if (this.source === src) this.source = null; resolve(); };
-        this.source = src; src.start(0);
-      });
-      if (tok === this.token) this._finish();
+      await this._play(samples, rate, tok);
       return;
     }
-    throw lastErr || new Error('TTS failed');
+    throw lastErr || fail('TTS failed', 0, 'Gemini voice failed');
   }
 
-  _speakDevice(text, lang, tok) {
-    return new Promise((resolve) => {
-      if (!this.synth) { setTimeout(() => { if (tok === this.token) this._finish(); resolve(); }, Math.min(4000, 600 + text.length * 35)); return; }
-      const v = this.bestDeviceVoice(lang);
-      this.lastUsed = `${/iPhone|iPad|Macintosh/.test(navigator.userAgent) ? 'iPhone' : 'Device'} – ${v ? v.name : 'default voice'}`;
-      const parts = sentences(text);
+  // Play through the gesture-unlocked AudioContext; if iOS keeps it suspended, use the primed <audio> element.
+  async _play(samples, rate, tok) {
+    const dur = samples.length / rate;
+    if (this.ctx && this.ctx.state !== 'running') await withTimeout(this.ctx.resume?.(), 800);
+    if (this.ctx && this.ctx.state === 'running') {
+      const buf = this.ctx.createBuffer(1, samples.length, rate);
+      buf.getChannelData(0).set(samples);
+      return new Promise((resolve) => {
+        const src = this.ctx.createBufferSource(); src.buffer = buf; src.connect(this.analyser);
+        let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); if (this.source === src) this.source = null; if (tok === this.token) this._finish(); resolve(); };
+        src.onended = end; const guard = setTimeout(end, dur * 1000 + 1500);   // never hang if onended is lost
+        this.source = src; src.start(0);
+      });
+    }
+    if (this.el) {
+      const url = URL.createObjectURL(wavBlob(samples, rate));
+      try {
+        this.el.src = url;
+        await this.el.play();
+        await new Promise((resolve) => {
+          let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); resolve(); };
+          this.el.onended = end; this.el.onerror = end; this.el.onpause = end; const guard = setTimeout(end, dur * 1000 + 1500);
+        });
+        if (tok === this.token) this._finish();
+        return;
+      } catch (e) { const er = new Error('locked'); er.reason = 'audio still locked – tap the screen once, then try again'; throw er; }
+      finally { setTimeout(() => URL.revokeObjectURL(url), 2000); }
+    }
+    const er = new Error('no audio'); er.reason = 'no audio output available'; throw er;
+  }
+
+  async _waitVoices(ms) {
+    if (!this.synth || this.voices.length) return;
+    const t0 = Date.now();
+    while (Date.now() - t0 < ms) { const v = this.synth.getVoices(); if (v.length) { this.voices = v; return; } await sleep(100); }
+  }
+
+  async _speakDevice(text, lang, tok, reason) {
+    if (!this.synth) { this.lastUsed = `No speech engine in this browser`; await sleep(Math.min(4000, 600 + text.length * 35)); if (tok === this.token) this._finish(); return; }
+    await this._waitVoices(1200);
+    if (tok !== this.token) return;
+    const v = this.bestDeviceVoice(lang);
+    this.lastUsed = `${DEV} backup voice${v ? ' – ' + v.name : ''} · reason: ${reason}`;
+    this.onStatus?.();
+    try { if (this.synth.speaking || this.synth.pending) { this.synth.cancel(); await sleep(80); } } catch {}   // iOS drops a speak() right after cancel()
+    try { this.synth.resume?.(); } catch {}
+    const parts = sentences(text);
+    await new Promise((resolve) => {
       let i = 0;
       const next = () => {
         if (tok !== this.token) return resolve();
@@ -204,11 +311,19 @@ export class Voice {
         const u = new SpeechSynthesisUtterance(parts[i++]);
         u.lang = v?.lang || (lang === 'id' ? 'id-ID' : 'en-US');
         if (v) u.voice = v;
-        u.rate = 1.05; u.pitch = 1.18;                     // a touch brighter/cuter, still natural (no chipmunk)
+        u.rate = 1.05; u.pitch = 1.18; u.volume = 1;
+        this._utts.push(u); if (this._utts.length > 8) this._utts.shift();   // keep refs: iOS GC can drop onend
+        let started = false;
+        u.onstart = () => { started = true; };
         u.onboundary = () => this.onLevel?.(1);
-        let done = false; const fin = () => { if (!done) { done = true; clearTimeout(guard); setTimeout(next, 120); } };
+        let done = false; const fin = (ev) => {
+          if (done) return; done = true; clearTimeout(guard); clearTimeout(kick);
+          if (ev && ev.type === 'error' && ev.error && !/interrupted|canceled/.test(ev.error) && !this.lastUsed.includes('speech error')) { this.lastUsed += ` (speech error: ${ev.error})`; this.onStatus?.(); }
+          setTimeout(next, 120);
+        };
         u.onend = fin; u.onerror = fin;
         const guard = setTimeout(fin, 2500 + u.text.length * 110);   // iOS sometimes skips onend
+        const kick = setTimeout(() => { if (!started && tok === this.token) { try { this.synth.resume?.(); } catch {} } }, 1200);
         this.synth.speak(u);
       };
       next();
