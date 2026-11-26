@@ -14,6 +14,6 @@
 - Change defaults via `DEFAULT_GHOST` / `DEFAULT_UI` in `js/main.js`.
 
 ## Voice
-- Default: natural Gemini TTS (`gemini-3.8-flash-lite-tts`, falls back to `gemini-3.8-flash-tts`) via `POST /v1beta/interactions` with the same key; 12 prebuilt voices (default Aoede).
+- Default: natural Gemini TTS (`gemini-3.8-flash-lite-tts`, falls back to `gemini-3.8-flash-tts`) via `POST /v1beta/interactions` with the same key; 13 prebuilt voices (default Leda – youthful, cute; style "cheerful, sweet, playful and soft"); iPhone fallback prefers young bright voices (Zoe, Nicky, Ava, Samantha) at pitch 1.18, rate 1.05.
 - Falls back automatically to the best on-device voice (prefers Premium/Enhanced/Siri voices, skips robotic novelty voices), spoken sentence by sentence at natural rate/pitch.
 - Settings › Voice: choose engine + voice, "Test" button.

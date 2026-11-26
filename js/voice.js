@@ -2,12 +2,15 @@
 const TTS_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 export const TTS_MODELS = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
 export const GEMINI_VOICES = [
-  ['Aoede', 'Aoede – breezy, warm (female)'], ['Kore', 'Kore – calm, firm (female)'], ['Leda', 'Leda – youthful (female)'],
-  ['Callirrhoe', 'Callirrhoe – easy-going (female)'], ['Autonoe', 'Autonoe – bright (female)'], ['Zephyr', 'Zephyr – bright'],
+  ['Leda', 'Leda – youthful, cute (female) ★'], ['Zephyr', 'Zephyr – bright'], ['Autonoe', 'Autonoe – bright (female)'],
+  ['Laomedeia', 'Laomedeia – upbeat (female)'], ['Achernar', 'Achernar – soft (female)'], ['Aoede', 'Aoede – breezy, warm (female)'],
+  ['Kore', 'Kore – calm, firm (female)'], ['Callirrhoe', 'Callirrhoe – easy-going (female)'],
   ['Puck', 'Puck – upbeat (male)'], ['Charon', 'Charon – informative (male)'], ['Orus', 'Orus – firm (male)'],
   ['Iapetus', 'Iapetus – clear (male)'], ['Enceladus', 'Enceladus – breathy, soft'], ['Fenrir', 'Fenrir – excitable'],
 ];
-const STYLE = 'natural, warm and relaxed, like a friendly person talking casually; not robotic';
+export const DEFAULT_GEMINI_VOICE = 'Leda';
+// Short constant style string (per Google's TTS prompting guide): cute but natural, never robotic or chipmunk.
+const STYLE = 'cheerful, sweet, playful and soft, like a cute friendly little ghost; light and bubbly, smiling while talking; natural, not robotic';
 
 // Novelty / old robotic voices on Apple & others – never auto-pick these.
 const ROBOTIC = /(albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|eddy|flo|grandma|grandpa|reed|rocko|sandy|shelley|eloquence|espeak)/i;
@@ -31,7 +34,10 @@ export function scoreVoice(v, lang) {
   if (/google/i.test(n)) s += 15;                     // Chrome's Google voices are decent
   if (/compact/i.test(n)) s -= 8;
   if (lang === 'en') {
-    if (/\b(ava|zoe|evan|samantha|nathan|joelle|noelle|allison|susan|tom)\b/i.test(n)) s += 12;
+    if (/\b(zoe|nicky|ava|samantha)\b/i.test(n)) s += 14;          // young, bright voices first
+    else if (/\b(joelle|noelle|allison|susan|karen|tessa|moira)\b/i.test(n)) s += 9;
+    else if (/\b(evan|nathan|tom|daniel|alex|fred)\b/i.test(n)) s += 2;
+    if (/\b(zoe|nicky)\b/i.test(n)) s += 4;
     if (l === 'en-us') s += 4; else if (l === 'en-gb' || l === 'en-au') s += 2;
   }
   if (lang === 'id' && /damayanti/i.test(n)) s += 12;
@@ -81,7 +87,7 @@ export class Voice {
   describe(lang) {
     if (this.lastUsed) return this.lastUsed;
     const p = this.getPrefs();
-    if (p.engine !== 'device' && this.getKey() && Date.now() > this.ttsFailUntil) return `Gemini ${p.geminiVoice || 'Aoede'}`;
+    if (p.engine !== 'device' && this.getKey() && Date.now() > this.ttsFailUntil) return `Gemini ${p.geminiVoice || DEFAULT_GEMINI_VOICE}`;
     const v = this.bestDeviceVoice(lang);
     const dev = /iPhone|iPad|Macintosh/.test(navigator.userAgent) ? 'iPhone' : 'Device';
     return v ? `${dev} – ${v.name}${p.engine !== 'device' && !this.getKey() ? ' (add a Gemini key for the AI voice)' : ''}` : `${dev} default voice`;
@@ -129,7 +135,7 @@ export class Voice {
     const useGemini = !opts.device && prefs.engine !== 'device' && this.getKey() && this.ctx && Date.now() > this.ttsFailUntil;
     this.speaking = true; this.onStart?.();
     if (useGemini) {
-      try { await this._speakGemini(clean, tok, prefs); this.lastUsed = `Gemini ${prefs.geminiVoice || 'Aoede'}`; return; }
+      try { await this._speakGemini(clean, tok, prefs); this.lastUsed = `Gemini ${prefs.geminiVoice || DEFAULT_GEMINI_VOICE}`; return; }
       catch (e) {
         if (tok !== this.token) return;
         console.warn('Gemini TTS unavailable, using device voice:', e.message || e);
@@ -154,7 +160,7 @@ export class Voice {
             model,
             input: [{ type: 'user_input', content: [{ type: 'text', text, annotations: [{ type: 'speech_metadata', style: STYLE }] }] }],
             response_format: { type: 'audio', mime_type: 'audio/wav' },
-            generation_config: { speech_config: [{ voice: prefs.geminiVoice || 'Aoede' }] },
+            generation_config: { speech_config: [{ voice: prefs.geminiVoice || DEFAULT_GEMINI_VOICE }] },
           }),
         });
       } finally { clearTimeout(to); }
@@ -198,7 +204,7 @@ export class Voice {
         const u = new SpeechSynthesisUtterance(parts[i++]);
         u.lang = v?.lang || (lang === 'id' ? 'id-ID' : 'en-US');
         if (v) u.voice = v;
-        u.rate = 1.0; u.pitch = 1.0;                       // natural – no chipmunk pitch
+        u.rate = 1.05; u.pitch = 1.18;                     // a touch brighter/cuter, still natural (no chipmunk)
         u.onboundary = () => this.onLevel?.(1);
         let done = false; const fin = () => { if (!done) { done = true; clearTimeout(guard); setTimeout(next, 120); } };
         u.onend = fin; u.onerror = fin;

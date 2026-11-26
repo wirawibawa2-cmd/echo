@@ -1,6 +1,6 @@
-import { Ghost } from './ghost.js?v=2';
-import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=2';
-import { Voice, GEMINI_VOICES, TTS_MODELS } from './voice.js?v=2';
+import { Ghost } from './ghost.js?v=3';
+import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=3';
+import { Voice, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE } from './voice.js?v=3';
 
 // ====== Easy-to-change settings ======
 const BOT_NAME = 'Echo';
@@ -115,7 +115,7 @@ document.querySelector('.sub-name').textContent = BOT_NAME;
 // ---------- 3D ----------
 let ghost = null;
 // Defaults: Echo particle ghost (e) on the premium black UI (4). ?ghost=cute brings back the original.
-const APP_VERSION = 'v2';
+const APP_VERSION = 'v3';
 const DEFAULT_GHOST = 'sheet', DEFAULT_UI = '4';
 let DESIGN = (new URLSearchParams(location.search).get('ghost') || DEFAULT_GHOST).toLowerCase();
 if (DESIGN === 'cute') DESIGN = 'default';
@@ -295,7 +295,9 @@ async function streamMsg(text, cls) {
 el.form.addEventListener('submit', (e) => { e.preventDefault(); unlockAudio(); send(el.input.value); el.input.blur(); });
 
 // ---------- Speech output ----------
-const voicePrefs = () => ({ engine: ls.get(LS.engine, 'gemini'), geminiVoice: ls.get(LS.gvoice, 'Aoede'), deviceVoice: ls.get(LS.dvoice, ''), ttsModel: ls.get(LS.ttsModel, TTS_MODELS[0]) });
+// v3: the old default (Aoede) moves to the cuter default once; a voice picked on purpose later is kept
+if (ls.get('ghost.voiceV', '') !== '3') { if (ls.get(LS.gvoice, '') === 'Aoede') ls.set(LS.gvoice, DEFAULT_GEMINI_VOICE); ls.set('ghost.voiceV', '3'); }
+const voicePrefs = () => ({ engine: ls.get(LS.engine, 'gemini'), geminiVoice: ls.get(LS.gvoice, DEFAULT_GEMINI_VOICE), deviceVoice: ls.get(LS.dvoice, ''), ttsModel: ls.get(LS.ttsModel, TTS_MODELS[0]) });
 const voice = new Voice({
   getKey, getPrefs: voicePrefs,
   onLevel: (v) => { if (ghost) ghost.speakLevel = v; },
@@ -380,7 +382,7 @@ vEl.test.addEventListener('click', () => {
 function showUsing() { document.getElementById('voiceUsing').textContent = 'Using: ' + voice.describe(lang); }
 function openSheet() {
   setTimeout(showUsing, 0);
-  fillDeviceVoices(); vEl.engine.value = ls.get(LS.engine, 'gemini'); vEl.g.value = ls.get(LS.gvoice, 'Aoede'); syncVoiceUI();
+  fillDeviceVoices(); vEl.engine.value = ls.get(LS.engine, 'gemini'); vEl.g.value = ls.get(LS.gvoice, DEFAULT_GEMINI_VOICE); syncVoiceUI();
   el.key.value = getKey(); el.key.type = 'password'; el.showKey.textContent = 'Show';
   el.model.value = getModel(); el.persist.checked = ls.get(LS.persist) === '1';
   el.sheet.hidden = false; el.backdrop.hidden = false;
