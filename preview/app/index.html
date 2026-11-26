@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Cache-Control" content="no-cache">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
 <title>Echo · 3D Ghost Assistant</title>
 <meta name="theme-color" content="#000000">
@@ -9,10 +10,10 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Echo">
-<link rel="apple-touch-icon" href="assets/icon-180.png?v=7.1">
-<link rel="icon" href="assets/icon-192.png?v=7.1">
-<link rel="manifest" href="manifest.webmanifest?v=7.1">
-<link rel="stylesheet" href="css/style.css?v=7.1">
+<link rel="apple-touch-icon" href="assets/icon-180.png?v=7.2">
+<link rel="icon" href="assets/icon-192.png?v=7.2">
+<link rel="manifest" href="manifest.webmanifest?v=7.2">
+<link rel="stylesheet" href="css/style.css?v=7.2">
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.js" } }</script>
 </head>
 <body>
@@ -99,6 +100,7 @@
       <div class="kokoro-opts" id="kokoroOpts">
         <label class="mini"><span>Model size</span><select id="kModelSelect"></select></label>
         <label class="mini"><span>Engine</span><select id="kDeviceSelect"><option value="auto">Auto (WASM on iPhone)</option><option value="wasm">WASM only (safest)</option><option value="webgpu">WebGPU (experimental)</option></select></label>
+        <label class="mini"><span>Audio output</span><select id="aOutSelect"><option value="element">Audio player (works in silent mode) ★</option><option value="webaudio">Web Audio</option></select></label>
         <label class="mini"><span>Playback</span><select id="kModeSelect"><option value="stream">Stream – talks right away</option><option value="gapless">Gapless – smooth, starts later</option></select></label>
         <div class="kbar" id="kBar"><i></i></div>
         <div class="kstatus" id="kStatus"></div>
@@ -120,6 +122,6 @@
     <p class="fine ver" id="verLabel"></p>
   </form>
 </div>
-<script type="module" src="js/main.js?v=7.1"></script>
+<script type="module" src="js/main.js?v=7.2"></script>
 </body>
 </html>

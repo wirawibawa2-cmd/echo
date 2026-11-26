@@ -240,3 +240,10 @@ body.has-chat .key-nudge,body.iconmode .key-nudge,body.clean .key-nudge{display:
   -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);text-align:center;pointer-events:none}
 .dl-pill[hidden]{display:none}.dl-pill.err{color:#ffb3b3}
 body.iconmode .dl-pill,body.clean .dl-pill{display:none!important}
+
+#dbg{position:fixed;left:6px;right:6px;top:calc(var(--sat, 0px) + 6px);max-height:62vh;z-index:99;background:rgba(0,0,0,.92);border:1px solid #ffd28a;border-radius:12px;color:#e8ebf0;font:11.5px/1.4 ui-monospace,Menlo,monospace;display:flex;flex-direction:column;padding:8px}
+#dbg.min{max-height:40px;overflow:hidden}
+.dbg-h{font-size:12px;color:#ffd28a}.dbg-h span{color:#aab0bb}
+.dbg-s{white-space:pre-wrap;margin:6px 0;color:#9fe0b5}
+.dbg-b{display:flex;flex-wrap:wrap;gap:5px}.dbg-b button{font:600 12px -apple-system,system-ui;padding:8px 9px;border-radius:9px;border:0;background:#fff;color:#000}
+#dbgLog{flex:1;overflow:auto;margin:6px 0 0;white-space:pre-wrap;color:#c9ced8;min-height:80px}

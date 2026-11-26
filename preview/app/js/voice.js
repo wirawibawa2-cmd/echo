@@ -1,26 +1,8 @@
 // Echo voice output (v7): free on-device Kokoro "Heart" voice first, then Gemini TTS (user's own key), then the iPhone voice.
-import { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE, KOKORO_CACHE, KOKORO_HF } from './kokoro-config.js?v=7.1';
+import { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE, KOKORO_CACHE, KOKORO_HF } from './kokoro-config.js?v=7.2';
 export { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE };
-import { textToPhonemes, VOCAB } from './kokoro-phonemize.js?v=7.1';
-const kTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms / 1000}s`)), ms))]);
-// memory-friendly chunking: sentences, long ones split at commas (activation RAM grows with length)
-function kChunks(text, max = 140) {
-  const out = [];
-  for (const s of (text.match(/[^.!?…]+[.!?…]*["')\]]*\s*/g) || [text]).map(x => x.trim()).filter(Boolean)) {
-    if (s.length <= max) { out.push(s); continue; }
-    let cur = '';
-    for (const p of s.split(/(?<=[,;:—])\s+/)) { if ((cur + ' ' + p).trim().length > max && cur) { out.push(cur.trim()); cur = p; } else cur = (cur + ' ' + p).trim(); }
-    while (cur.length > max) { const sp = cur.lastIndexOf(' ', max), cut = sp > 40 ? sp : max; out.push(cur.slice(0, cut).trim()); cur = cur.slice(cut).trim(); }
-    if (cur) out.push(cur);
-  }
-  return out;
-}
-async function kIds(text) {
-  const ph = await kTimeout(textToPhonemes(text, 'a'), 8000, 'phonemizer');
-  const ids = [0]; for (const ch of ph) { const id = VOCAB[ch]; if (id !== undefined) ids.push(id); } ids.push(0);
-  if (ids.length > 510) { ids.length = 509; ids.push(0); }
-  return ids;
-}
+import { Heart, chunks as heartChunks } from './heart-engine.js?v=7.2';
+import { textToPhonemes } from './kokoro-phonemize.js?v=7.2';
 const TTS_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 export const TTS_MODELS = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
 export const GEMINI_VOICES = [
@@ -104,61 +86,66 @@ const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAI
 
 // ---- Kokoro client: owns the worker, download progress and crash breadcrumbs ----
 const CRUMB = 'echo.kokoro.crumb';
+// v7.2: no worker – the exact heart.html engine (heart-engine.js) on the main thread.
+export const dbg = (s) => { try { (window.__echoLog = window.__echoLog || []).push(`${(performance.now() / 1000).toFixed(1)}s ${s}`); window.__echoDbg?.(s); } catch {} };
 export class Kokoro {
-  constructor(onChange) { this.onChange = onChange || (() => {}); this.worker = null; this.state = 'idle'; this.progress = [0, 0]; this.error = ''; this.device = ''; this.key = ''; this.cached = false; this.jobs = new Map(); }
-  get ready() { return this.state === 'ready' && !this.phonErr; }
+  constructor(onChange) { this.onChange = onChange || (() => {}); this.heart = null; this.state = 'idle'; this.progress = [0, 0]; this.error = ''; this.device = ''; this.key = ''; this.cached = false; this.job = 0; }
+  get ready() { return this.state === 'ready'; }
   get pct() { const [l, t] = this.progress; return t ? Math.min(100, Math.round(l / t * 100)) : 0; }
   crumb(stage) { try { localStorage.setItem(CRUMB, JSON.stringify({ stage, key: this.key, t: Date.now() })); } catch {} }
   clearCrumb() { try { localStorage.removeItem(CRUMB); } catch {} }
   static lastCrash() { try { const c = JSON.parse(localStorage.getItem(CRUMB) || 'null'); localStorage.removeItem(CRUMB); return c && Date.now() - c.t < 30 * 60e3 ? c : null; } catch { return null; } }
   static async isCached(modelId) { try { const m = KOKORO_MODELS.find(x => x.id === modelId); const c = await caches.open(KOKORO_CACHE); return !!(await c.match(KOKORO_HF + m.file)); } catch { return false; } }
   static async clearCache() { try { await caches.delete(KOKORO_CACHE); } catch {} }
-  // (re)load if the model/engine/optimization changed; terminating the old worker frees all its memory
   load({ model = DEFAULT_KOKORO_MODEL, device = 'auto', opt = 'disabled' } = {}) {
     const key = `${model}|${device}|${opt}`;
-    if (this.worker && this.key === key && this.state !== 'error') return;
+    if (this.heart && this.key === key && this.state !== 'error') return;
     this.terminate();
     const m = KOKORO_MODELS.find(x => x.id === model) || KOKORO_MODELS[0];
     this.key = key; this.model = m; this.state = 'loading'; this.stage = 'download'; this.error = ''; this.progress = [0, m.mb * 1e6]; this.cached = false;
-    try { this.worker = new Worker(new URL('./kokoro-worker.js?v=7.1', import.meta.url), { type: 'module' }); }
-    catch (e) { this.state = 'error'; this.error = 'workers not supported: ' + (e.message || e); this.onChange(); return; }
-    this.worker.onerror = (e) => { this.state = 'error'; this.error = 'voice engine failed to start' + (e.message ? ': ' + e.message : ''); this.clearCrumb(); this.onChange(); this._failJobs(this.error); };
-    this.worker.onmessage = ({ data: d }) => {
-      if (d.type === 'stage') { this.stage = d.stage; this.stageMsg = d.msg; this.crumb(d.stage); }
-      else if (d.type === 'progress') this.progress = [d.loaded, d.total || this.progress[1]];
-      else if (d.type === 'cached') { this.cached = true; this.progress = [1, 1]; }
-      else if (d.type === 'ready') { this.state = 'ready'; this.device = d.device; if (d.ms) this.loadMs = d.ms; this.clearCrumb(); }
-      else if (d.type === 'error') {
-        if (d.where === 'load') { this.state = 'error'; this.error = `${this.stage}: ${d.error}`; this.clearCrumb(); this._failJobs(this.error); }
-        else { const j = this.jobs.get(d.id); this.clearCrumb(); if (j) { this.jobs.delete(d.id); j.reject(new Error(d.error)); } }
-      } else if (d.type === 'chunk') { const j = this.jobs.get(d.id); if (j) j.onChunk(d); }
-      else if (d.type === 'done') { const j = this.jobs.get(d.id); this.clearCrumb(); if (j) { this.jobs.delete(d.id); j.resolve(); } }
-      this.onChange(d);
-    };
-    this.crumb('download');
-    this.worker.postMessage({ type: 'load', file: m.file, device, opt });
-    if (!this.phonReady) { const t0 = performance.now(); kIds('Hi there.').then(() => { this.phonReady = true; this.phonMs = Math.round(performance.now() - t0); }).catch(e => { this.phonErr = String(e.message || e); }); }
-    this.onChange();
-  }
-  _failJobs(msg) { for (const [id, j] of this.jobs) j.reject(new Error(msg)); this.jobs.clear(); }
-  terminate() { try { this.worker?.terminate(); } catch {} this.worker = null; this._failJobs('voice reloaded'); if (this.state !== 'error') this.state = 'idle'; this.clearCrumb(); }
-  stop() { this.worker?.postMessage({ type: 'stop' }); this._failJobs('stopped'); }
-  // returns a promise; onChunk({pcm, rate, i, n, ms}) is called for each sentence as soon as it is ready
-  async speak(text, voice, onChunk) {
-    if (!this.ready) throw new Error('voice not ready');
-    const items = [];
-    for (const part of kChunks(text)) items.push(await kIds(part));   // main thread: fast (ms per sentence once warm)
-    const id = Math.random().toString(36).slice(2);
-    return new Promise((resolve, reject) => {
-      this.jobs.set(id, { resolve, reject, onChunk });
-      this.crumb('generate');
-      this.worker.postMessage({ type: 'speak', id, items, voice: voice || DEFAULT_KOKORO_VOICE, speed: 1 });
+    const h = this.heart = new Heart((st, msg) => {
+      if (h !== this.heart) return;
+      this.stage = st === 'engine' ? 'session' : st; this.stageMsg = msg; dbg(`[heart] ${st}: ${msg}`);
+      if (st !== 'phonemize' && st !== 'generate') this.crumb(this.stage);
+      this.onChange({ type: 'stage' });
+    });
+    this.crumb('download'); this.onChange();
+    const t0 = performance.now();
+    h.load(m, { device, opt, onProg: (l, t, hit) => {
+      if (h !== this.heart) return;
+      if (hit) { this.cached = true; this.progress = [1, 1]; } else this.progress = [l, t || this.progress[1]];
+      this.onChange({ type: 'progress' });
+    } }).then(() => {
+      if (h !== this.heart) return;
+      this.state = 'ready'; this.device = h.device; this.loadMs = Math.round(performance.now() - t0); this.clearCrumb();
+      dbg(`[heart] ready on ${h.device} in ${this.loadMs} ms`); this.onChange({ type: 'ready' });
+      // warm the phonemizer AFTER the model is ready (never concurrently), no failure flag – same call heart.html makes
+      const p0 = performance.now(); textToPhonemes('Hi there.', 'a').then(() => { this.phonMs = Math.round(performance.now() - p0); dbg(`[heart] phonemizer warm in ${this.phonMs} ms`); }).catch(e => dbg('[heart] phonemizer warm-up error ' + (e.message || e)));
+    }).catch((e) => {
+      if (h !== this.heart) return;
+      this.state = 'error'; this.error = `${this.stage}: ${e.message || e}`; this.clearCrumb(); dbg('[heart] load error ' + this.error); this.onChange({ type: 'error' });
     });
   }
-  label() {
-    const v = this.model ? this.model.id : DEFAULT_KOKORO_MODEL;
-    return `${v} · ${this.device === 'webgpu' ? 'WebGPU' : 'WASM'}`;
+  terminate() { this.job++; try { this.heart?.session?.release?.(); } catch {} this.heart = null; if (this.state !== 'error') this.state = 'idle'; this.clearCrumb(); }
+  stop() { this.job++; }
+  // generates sentence by sentence on the main thread (same as heart.html); onChunk({pcm, rate, i, n, ms})
+  async speak(text, voice, onChunk) {
+    if (!this.ready) throw new Error('voice not ready');
+    const my = ++this.job, h = this.heart;
+    await h.setVoice(voice || DEFAULT_KOKORO_VOICE);
+    const parts = heartChunks(text);
+    for (let i = 0; i < parts.length; i++) {
+      if (my !== this.job) throw new Error('stopped');
+      this.crumb('generate');
+      const { pcm, rate, ms } = await h.synth(parts[i]);
+      this.clearCrumb();
+      this.device = h.device;
+      dbg(`[heart] chunk ${i + 1}/${parts.length}: ${(pcm.length / rate).toFixed(1)}s audio in ${Math.round(ms)} ms`);
+      if (my !== this.job) throw new Error('stopped');
+      onChunk({ pcm, rate, i, n: parts.length, ms });
+    }
   }
+  label() { return `${this.model ? this.model.id : DEFAULT_KOKORO_MODEL} · ${this.device === 'webgpu' ? 'WebGPU' : 'WASM'}`; }
 }
 
 export class Voice {
@@ -170,7 +157,8 @@ export class Voice {
     this.unlocked = false; this.synthPrimed = false; this.speaking = false; this.token = 0; this.ttsFailUntil = 0;
     this.lastUsed = ''; this.lastReason = ''; this._utts = [];
     this.standalone = STANDALONE;
-    this.kokoro = new Kokoro((d) => { if (!d || d.type !== 'chunk') this.onStatus?.(); this.onKokoro?.(d); });
+    this.kokoro = new Kokoro((d) => { this.onStatus?.(); this.onKokoro?.(d); });
+    this.needSynth = () => { const p = this.getPrefs(); return p.engine === 'device' || ((!this.kokoro.ready || this.kokoro.lastErr) && (!this.getKey() || Date.now() < this.ttsFailUntil)); };
     if (this.synth) {
       const load = () => { const v = this.synth.getVoices(); if (v.length) this.voices = v; };
       load(); this.synth.addEventListener?.('voiceschanged', load);
@@ -186,7 +174,7 @@ export class Voice {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (AC && !this.ctx) {
         this.ctx = new AC();
-        this.analyser = this.ctx.createAnalyser(); this.analyser.fftSize = 512; this.analyser.connect(this.ctx.destination);
+        this.analyser = this.ctx.createAnalyser(); this.analyser.fftSize = 512;
         this._buf = new Uint8Array(this.analyser.fftSize);
         this.ctx.onstatechange = () => this.onStatus?.();
       }
@@ -201,7 +189,7 @@ export class Voice {
       if (!this.unlocked) { this.el.src = SILENT_WAV; const pr = this.el.play(); pr?.catch?.(() => {}); }
     } catch {}
     try {   // speechSynthesis must speak once inside a gesture on iOS; a whitespace-only utterance can be ignored
-      if (this.synth && !this.speaking && !(this.synth.speaking || this.synth.pending) && Date.now() - (this._primeT || 0) > 1500) {
+      if (this.synth && this.needSynth?.() && !this.speaking && !(this.synth.speaking || this.synth.pending) && Date.now() - (this._primeT || 0) > 1500) {
         this.synthPrimed = true; this._primeT = Date.now();
         const u = new SpeechSynthesisUtterance('.'); u.volume = 0; u.rate = 2; this._utts.push(u); this.synth.speak(u);
       }
@@ -260,12 +248,6 @@ export class Voice {
       .sort((a, b) => b.s - a.s).map(x => x.v);
   }
 
-  level() {
-    if (!this.analyser || !this.source) return 0;
-    this.analyser.getByteTimeDomainData(this._buf);
-    let sum = 0; for (let i = 0; i < this._buf.length; i++) { const d = (this._buf[i] - 128) / 128; sum += d * d; }
-    return Math.min(1, Math.sqrt(sum / this._buf.length) * 4);
-  }
 
   stop() {
     this.token++;
@@ -337,11 +319,11 @@ export class Voice {
     let wd = null, rejectWd = null;
     const arm = (ms) => { clearTimeout(wd); wd = setTimeout(() => { this.kokoro.stop(); rejectWd?.(new Error(`too slow on this phone (no audio after ${ms / 1000}s)`)); }, ms); };
     const watchdog = new Promise((_, rej) => { rejectWd = rej; });
-    arm(9000);
+    arm(30000);
     try {
       await Promise.race([watchdog, this.kokoro.speak(text, prefs.kokoroVoice, (c) => {
         if (tok !== this.token) return;
-        arm(20000);
+        arm(30000);
         if (gapless) held.push(c); else play(c.pcm, c.rate);
       })]);
     } finally { clearTimeout(wd); }
@@ -349,30 +331,57 @@ export class Voice {
     await chain;
     if (firstErr) throw firstErr;
   }
+  // v7.2 playback: an <audio> element (primed inside a tap) fed a WAV blob – the same route as samples.html, which
+  // plays on iPhone even with the silent switch on. Web Audio (heart.html's route) is the second try.
   _playSeg(samples, rate, tok) {
-    const dur = samples.length / rate;
-    const viaCtx = async () => {
-      if (this.ctx && this.ctx.state !== 'running') await withTimeout(this.ctx.resume?.(), 800);
-      if (!(this.ctx && this.ctx.state === 'running')) return false;
-      const buf = this.ctx.createBuffer(1, samples.length, rate); buf.getChannelData(0).set(samples);
-      await new Promise((resolve) => {
-        const src = this.ctx.createBufferSource(); src.buffer = buf; src.connect(this.analyser);
-        let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); if (this.source === src) this.source = null; resolve(); };
-        src.onended = end; const guard = setTimeout(end, dur * 1000 + 1500);
-        this.source = src; this._ksrcs.push(src); src.start(0);
-      });
-      return true;
+    const out = (this.getPrefs().audioOut || 'element');
+    const order = out === 'webaudio' ? ['webaudio', 'element'] : ['element', 'webaudio'];
+    const tryOne = async (i) => {
+      if (tok !== this.token) return;
+      const how = order[i]; if (!how) throw new Error('no audio output worked');
+      try { await (how === 'element' ? this._viaElement(samples, rate, tok) : this._viaCtx(samples, rate, tok)); this.lastOut = how; }
+      catch (e) { dbg(`[audio] ${how} failed: ${e.message || e}`); this.lastOutErr = `${how}: ${e.message || e}`; return tryOne(i + 1); }
     };
-    return viaCtx().then(async (ok) => {
-      if (ok || tok !== this.token) return;
-      if (!this.el) { const er = new Error('no audio output'); throw er; }
-      const url = URL.createObjectURL(wavBlob(samples, rate));
-      try {
-        this.el.src = url; await this.el.play();
-        await new Promise((resolve) => { let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); resolve(); }; this.el.onended = end; this.el.onerror = end; this.el.onpause = end; const guard = setTimeout(end, dur * 1000 + 1500); });
-      } catch (e) { throw new Error('audio still locked – tap the screen once'); }
-      finally { setTimeout(() => URL.revokeObjectURL(url), 2000); }
+    return tryOne(0);
+  }
+  async _viaElement(samples, rate, tok) {
+    if (!this.el) throw new Error('no <audio> element (tap once)');
+    const dur = samples.length / rate, url = URL.createObjectURL(wavBlob(samples, rate));
+    const el = this.el;
+    try {
+      el.muted = false; el.volume = 1; el.src = url;
+      dbg(`[audio] <audio> play ${dur.toFixed(1)}s`);
+      await Promise.race([el.play(), new Promise((_, rej) => setTimeout(() => rej(new Error('play() timed out')), 4000))]);
+      this._elPcm = samples; this._elRate = rate;   // ghost glow follows the real samples
+      await new Promise((resolve) => {
+        let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); el.onended = el.onerror = el.onpause = null; resolve(); };
+        el.onended = end; el.onerror = end; el.onpause = end; const guard = setTimeout(end, dur * 1000 + 2000);
+      });
+    } finally { this._elPcm = null; setTimeout(() => URL.revokeObjectURL(url), 3000); }
+  }
+  async _viaCtx(samples, rate, tok) {
+    if (this.ctx && this.ctx.state !== 'running') await withTimeout(this.ctx.resume?.(), 800);
+    if (!(this.ctx && this.ctx.state === 'running')) throw new Error('Web Audio ' + (this.ctx ? this.ctx.state : 'missing'));
+    const dur = samples.length / rate;
+    const buf = this.ctx.createBuffer(1, samples.length, rate); buf.getChannelData(0).set(samples);
+    dbg(`[audio] Web Audio play ${dur.toFixed(1)}s (ctx ${this.ctx.state}, ${this.ctx.sampleRate} Hz)`);
+    await new Promise((resolve) => {
+      const src = this.ctx.createBufferSource(); src.buffer = buf; src.connect(this.ctx.destination); src.connect(this.analyser);
+      let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); if (this.source === src) this.source = null; resolve(); };
+      src.onended = end; const guard = setTimeout(end, dur * 1000 + 1500);
+      this.source = src; (this._ksrcs = this._ksrcs || []).push(src); src.start(0);
     });
+  }
+  level() {
+    if (this._elPcm && this.el && !this.el.paused) {
+      const i = Math.floor(this.el.currentTime * this._elRate), p = this._elPcm; let sum = 0, n = 0;
+      for (let j = Math.max(0, i - 600); j < Math.min(p.length, i + 600); j += 4) { sum += p[j] * p[j]; n++; }
+      return n ? Math.min(1, Math.sqrt(sum / n) * 5) : 0;
+    }
+    if (!this.analyser || !this.source) return 0;
+    this.analyser.getByteTimeDomainData(this._buf);
+    let sum = 0; for (let i = 0; i < this._buf.length; i++) { const d = (this._buf[i] - 128) / 128; sum += d * d; }
+    return Math.min(1, Math.sqrt(sum / this._buf.length) * 4);
   }
 
   async _speakGemini(text, tok, prefs) {
@@ -424,34 +433,11 @@ export class Voice {
 
   // Play through the gesture-unlocked AudioContext; if iOS keeps it suspended, use the primed <audio> element.
   async _play(samples, rate, tok) {
-    const dur = samples.length / rate;
-    if (this.ctx && this.ctx.state !== 'running') await withTimeout(this.ctx.resume?.(), 800);
-    if (this.ctx && this.ctx.state === 'running') {
-      const buf = this.ctx.createBuffer(1, samples.length, rate);
-      buf.getChannelData(0).set(samples);
-      return new Promise((resolve) => {
-        const src = this.ctx.createBufferSource(); src.buffer = buf; src.connect(this.analyser);
-        let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); if (this.source === src) this.source = null; if (tok === this.token) this._finish(); resolve(); };
-        src.onended = end; const guard = setTimeout(end, dur * 1000 + 1500);   // never hang if onended is lost
-        this.source = src; src.start(0);
-      });
-    }
-    if (this.el) {
-      const url = URL.createObjectURL(wavBlob(samples, rate));
-      try {
-        this.el.src = url;
-        await this.el.play();
-        await new Promise((resolve) => {
-          let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); resolve(); };
-          this.el.onended = end; this.el.onerror = end; this.el.onpause = end; const guard = setTimeout(end, dur * 1000 + 1500);
-        });
-        if (tok === this.token) this._finish();
-        return;
-      } catch (e) { const er = new Error('locked'); er.reason = 'audio still locked – tap the screen once, then try again'; throw er; }
-      finally { setTimeout(() => URL.revokeObjectURL(url), 2000); }
-    }
-    const er = new Error('no audio'); er.reason = 'no audio output available'; throw er;
+    try { await this._playSeg(samples, rate, tok); }
+    catch (e) { const er = new Error('locked'); er.reason = 'audio blocked – ' + (e.message || e) + ' (tap the screen once)'; throw er; }
+    if (tok === this.token) this._finish();
   }
+
 
   async _waitVoices(ms) {
     if (!this.synth || this.voices.length) return;

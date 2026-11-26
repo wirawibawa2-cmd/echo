@@ -1,6 +1,6 @@
-import { Ghost } from './ghost.js?v=7.1';
-import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=7.1';
-import { Voice, Kokoro, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE, KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE } from './voice.js?v=7.1';
+import { Ghost } from './ghost.js?v=7.2';
+import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=7.2';
+import { Voice, Kokoro, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE, KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE } from './voice.js?v=7.2';
 
 // ====== Easy-to-change settings ======
 const BOT_NAME = 'Echo';
@@ -13,7 +13,7 @@ Keep replies short (1-3 sentences, max ~60 words) unless asked for detail. Repli
 const MAX_TURNS = 24;   // messages kept in context
 // =====================================
 
-const LS = { key: 'ghost.geminiKey', model: 'ghost.model', lang: 'ghost.lang', mute: 'ghost.mute', persist: 'ghost.persist', hist: 'ghost.history', engine: 'ghost.voiceEngine', gvoice: 'ghost.geminiVoice', dvoice: 'ghost.deviceVoice', ttsModel: 'ghost.ttsModel', kvoice: 'echo.kokoroVoice', kmodel: 'echo.kokoroModel', kdevice: 'echo.kokoroDevice', kmode: 'echo.kokoroMode' };
+const LS = { key: 'ghost.geminiKey', model: 'ghost.model', lang: 'ghost.lang', mute: 'ghost.mute', persist: 'ghost.persist', hist: 'ghost.history', engine: 'ghost.voiceEngine', gvoice: 'ghost.geminiVoice', dvoice: 'ghost.deviceVoice', ttsModel: 'ghost.ttsModel', kvoice: 'echo.kokoroVoice', kmodel: 'echo.kokoroModel', kdevice: 'echo.kokoroDevice', kmode: 'echo.kokoroMode', aout: 'echo.audioOut' };
 const ls = {
   get: (k, d = null) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
@@ -88,7 +88,7 @@ document.querySelector('.sub-name').textContent = BOT_NAME;
 // ---------- 3D ----------
 let ghost = null;
 // Defaults: Echo particle ghost (e) on the premium black UI (4). ?ghost=cute brings back the original.
-const APP_VERSION = 'v7.1';
+const APP_VERSION = 'v7.2';
 const DEFAULT_GHOST = 'sheet', DEFAULT_UI = '4';
 let DESIGN = (new URLSearchParams(location.search).get('ghost') || DEFAULT_GHOST).toLowerCase();
 if (DESIGN === 'cute') DESIGN = 'default';
@@ -99,7 +99,8 @@ if (new URLSearchParams(location.search).has('clean')) document.body.classList.a
 const THEMES = { '1': 0xff7a2a, '2': 0x4cc8ff, '3': 0xc060ff, '4': 0xc8ccd6 };
 const THEME = THEMES[new URLSearchParams(location.search).get('theme')] ? new URLSearchParams(location.search).get('theme') : '4';   // default: white/silver mono
 document.body.dataset.theme = THEME;
-try { ghost = new Ghost(el.canvas, DESIGN, { compact: UI === '4', accent: THEMES[THEME] }); }
+const NOGHOST = new URLSearchParams(location.search).has('noghost');   // debug: skip WebGL to test the RAM theory
+try { if (!NOGHOST) ghost = new Ghost(el.canvas, DESIGN, { compact: UI === '4', accent: THEMES[THEME] }); }
 catch (e) { console.warn('WebGL unavailable', e); el.canvas.style.display = 'none'; }
 window.addEventListener('resize', () => ghost?.resize());
 if (window.visualViewport) window.visualViewport.addEventListener('resize', () => ghost?.resize());
@@ -274,7 +275,7 @@ if (ls.get('ghost.voiceV', '') !== '3') { if (ls.get(LS.gvoice, '') === 'Aoede')
 // v7: the free on-device Heart voice becomes the default once (a later pick is kept)
 if (ls.get('ghost.voiceV', '') !== '7') { ls.set(LS.engine, 'kokoro'); ls.set('ghost.voiceV', '7'); }
 const kPrefs = () => ({ model: ls.get(LS.kmodel, DEFAULT_KOKORO_MODEL), device: ls.get(LS.kdevice, 'auto'), opt: 'disabled' });
-const voicePrefs = () => ({ kokoro: kPrefs(), kokoroVoice: ls.get(LS.kvoice, DEFAULT_KOKORO_VOICE), kokoroMode: ls.get(LS.kmode, 'stream'), engine: ls.get(LS.engine, 'kokoro'), geminiVoice: ls.get(LS.gvoice, DEFAULT_GEMINI_VOICE), deviceVoice: ls.get(LS.dvoice, ''), ttsModel: ls.get(LS.ttsModel, TTS_MODELS[0]) });
+const voicePrefs = () => ({ kokoro: kPrefs(), kokoroVoice: ls.get(LS.kvoice, DEFAULT_KOKORO_VOICE), kokoroMode: ls.get(LS.kmode, 'stream'), audioOut: ls.get(LS.aout, 'element'), engine: ls.get(LS.engine, 'kokoro'), geminiVoice: ls.get(LS.gvoice, DEFAULT_GEMINI_VOICE), deviceVoice: ls.get(LS.dvoice, ''), ttsModel: ls.get(LS.ttsModel, TTS_MODELS[0]) });
 const voice = new Voice({
   getKey, getPrefs: voicePrefs,
   onLevel: (v) => { if (ghost) ghost.speakLevel = v; },
@@ -384,7 +385,7 @@ el.lang.hidden = true; el.lang.style.display = 'none';
 // ---------- Settings sheet ----------
 for (const m of MODELS) { const o = document.createElement('option'); o.value = m.id; o.textContent = m.label; el.model.appendChild(o); }
 const vEl = { engine: $('engineSelect'), g: $('geminiVoiceSelect'), d: $('deviceVoiceSelect'), k: $('kokoroVoiceSelect'), test: $('testVoiceBtn'),
-  kOpts: $('kokoroOpts'), kModel: $('kModelSelect'), kDevice: $('kDeviceSelect'), kMode: $('kModeSelect'), kBar: $('kBar'), kStatus: $('kStatus'), kClear: $('kClearBtn') };
+  kOpts: $('kokoroOpts'), kModel: $('kModelSelect'), kDevice: $('kDeviceSelect'), kMode: $('kModeSelect'), kBar: $('kBar'), kStatus: $('kStatus'), kClear: $('kClearBtn'), aOut: $('aOutSelect') };
 for (const [id, label] of KOKORO_VOICES) { const o = document.createElement('option'); o.value = id; o.textContent = label; vEl.k.appendChild(o); }
 for (const m of KOKORO_MODELS) { const o = document.createElement('option'); o.value = m.id; o.textContent = `${m.label} · ${m.mb} MB`; vEl.kModel.appendChild(o); }
 if (!navigator.gpu) { vEl.kDevice.options[0].textContent = 'Auto (WASM – no WebGPU here)'; vEl.kDevice.options[2].disabled = true; }
@@ -404,6 +405,7 @@ function kReload() { ls.set(LS.kmodel, vEl.kModel.value); ls.set(LS.kdevice, vEl
 vEl.kModel.addEventListener('change', kReload);
 vEl.kDevice.addEventListener('change', kReload);
 vEl.kMode.addEventListener('change', () => ls.set(LS.kmode, vEl.kMode.value));
+vEl.aOut.addEventListener('change', () => ls.set(LS.aout, vEl.aOut.value));
 vEl.k.addEventListener('change', () => { saveVoicePrefs(); voice.lastUsed = null; showUsing(); });
 vEl.kClear.addEventListener('click', async () => { voice.kokoro.terminate(); await Kokoro.clearCache(); voice.kokoro.state = 'idle'; await markCached(); vEl.kStatus.textContent = 'Deleted. It downloads again next time.'; if (vEl.engine.value === 'kokoro') setTimeout(() => voice.kokoro.load(kPrefs()), 300); });
 for (const [id, label] of GEMINI_VOICES) { const o = document.createElement('option'); o.value = id; o.textContent = label; vEl.g.appendChild(o); }
@@ -441,7 +443,7 @@ function updateNudge() {
 function openSheet() {
   setTimeout(showUsing, 0);
   fillDeviceVoices(); vEl.engine.value = ls.get(LS.engine, 'kokoro'); vEl.g.value = ls.get(LS.gvoice, DEFAULT_GEMINI_VOICE); vEl.k.value = ls.get(LS.kvoice, DEFAULT_KOKORO_VOICE);
-  vEl.kModel.value = ls.get(LS.kmodel, DEFAULT_KOKORO_MODEL); vEl.kDevice.value = ls.get(LS.kdevice, 'auto'); vEl.kMode.value = ls.get(LS.kmode, 'stream'); syncVoiceUI(); showKStatus(); markCached();
+  vEl.kModel.value = ls.get(LS.kmodel, DEFAULT_KOKORO_MODEL); vEl.kDevice.value = ls.get(LS.kdevice, 'auto'); vEl.kMode.value = ls.get(LS.kmode, 'stream'); vEl.aOut.value = ls.get(LS.aout, 'element'); syncVoiceUI(); showKStatus(); markCached();
   el.key.value = getKey(); el.key.type = 'password'; el.showKey.textContent = 'Show';
   el.model.value = getModel(); el.persist.checked = ls.get(LS.persist) === '1';
   el.sheet.hidden = false; el.backdrop.hidden = false;
@@ -479,3 +481,56 @@ document.querySelector('.greet .g-hi').textContent = `Hi, I'm ${BOT_NAME}!`;
 window.__ghost = { send, ghost: () => ghost, setState, voice, openSheet };
 if (new URLSearchParams(location.search).has('icon') && ghost) { ghost.iconMode = true; document.body.classList.add('iconmode'); }
 document.getElementById('verLabel').textContent = `Echo ${APP_VERSION}`;
+
+// ---------- ?debug=1 : big on-screen debug panel (stage log + audio tests) ----------
+if (new URLSearchParams(location.search).has('debug')) {
+  const box = document.createElement('div'); box.id = 'dbg';
+  box.innerHTML = `<div class="dbg-h"><b>Echo ${APP_VERSION} debug</b><span id="dbgEnv"></span></div>
+  <div id="dbgState" class="dbg-s"></div>
+  <div class="dbg-b">
+    <button data-t="beep">Beep · Web Audio</button><button data-t="wav">Beep · &lt;audio&gt; WAV</button><button data-t="synth">iPhone voice</button>
+    <button data-t="hel">Heart → &lt;audio&gt;</button><button data-t="hctx">Heart → Web Audio</button><button data-t="load">Load Heart</button>
+    <button data-t="copy">Copy log</button><button data-t="min">Hide</button>
+  </div><pre id="dbgLog"></pre>`;
+  document.body.appendChild(box);
+  const logEl = box.querySelector('#dbgLog');
+  const add = (s) => { logEl.textContent = (`${(performance.now() / 1000).toFixed(1)}s ${s}\n` + logEl.textContent).slice(0, 20000); };
+  (window.__echoLog || []).forEach(l => logEl.textContent = l + '\n' + logEl.textContent);
+  window.__echoDbg = (s) => add(s);
+  addEventListener('error', (e) => add('ERROR ' + (e.message || e) + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : '')));
+  addEventListener('unhandledrejection', (e) => add('REJECT ' + (e.reason?.message || e.reason)));
+  const ios = (navigator.userAgent.match(/OS (\d+[_\d]*)/) || [, '?'])[1].replace(/_/g, '.');
+  box.querySelector('#dbgEnv').textContent = ` · iOS ${ios} · ${voice.standalone ? 'home-screen app' : 'browser tab'} · ghost ${ghost ? 'on' : 'OFF'} · WebGPU ${navigator.gpu ? 'yes' : 'no'} · loaded ${new Date().toLocaleTimeString()}`;
+  setInterval(() => {
+    const k = voice.kokoro, c = voice.ctx, e = voice.el, sy = window.speechSynthesis;
+    box.querySelector('#dbgState').textContent =
+      `Heart: ${k.state}${k.state === 'loading' ? ' · ' + k.stage + ' ' + k.pct + '%' : ''}${k.device ? ' · ' + k.device : ''}${k.error ? ' · ERR ' + k.error : ''}${k.lastErr ? ' · lastErr ' + k.lastErr : ''}${k.phonMs ? ' · phon ' + k.phonMs + 'ms' : ''}\n` +
+      `Web Audio: ${c ? c.state + ' ' + c.sampleRate + 'Hz' : 'none'} · <audio>: ${e ? (e.paused ? 'paused' : 'playing') + (e.error ? ' err' + e.error.code : '') : 'none'} · session: ${navigator.audioSession ? navigator.audioSession.type : 'n/a'} · synth: ${sy ? (sy.speaking ? 'speaking' : 'idle') + ' voices ' + sy.getVoices().length : 'none'}\n` +
+      `out pref: ${ls.get(LS.aout, 'element')} · last out: ${voice.lastOut || '-'}${voice.lastOutErr ? ' · last fail ' + voice.lastOutErr : ''} · engine: ${ls.get(LS.engine, 'kokoro')} · key: ${getKey() ? 'yes' : 'no'}\nUsing: ${voice.describe('en')}`;
+  }, 500);
+  const tone = () => { const r = 24000, n = r * 0.6, p = new Float32Array(n); for (let i = 0; i < n; i++) p[i] = Math.sin(i / r * 2 * Math.PI * 660) * 0.35 * Math.min(1, (n - i) / 2000); return p; };
+  box.querySelector('.dbg-b').addEventListener('click', async (ev) => {
+    const t = ev.target.dataset.t; if (!t) return;
+    voice.unlock(); const tok = voice.token;
+    add(`[test] ${t} (ctx ${voice.ctx?.state})`);
+    try {
+      if (t === 'beep') { await voice._viaCtx(tone(), 24000, tok); add('[test] Web Audio beep finished (did you hear it?)'); }
+      if (t === 'wav') { await voice._viaElement(tone(), 24000, tok); add('[test] <audio> beep finished (did you hear it?)'); }
+      if (t === 'synth') { const u = new SpeechSynthesisUtterance('Hi, this is the iPhone voice.'); u.lang = 'en-US'; u.onstart = () => add('[test] synth started'); u.onend = () => add('[test] synth ended'); u.onerror = (e) => add('[test] synth error ' + e.error); speechSynthesis.cancel(); speechSynthesis.speak(u); }
+      if (t === 'load') voice.kokoro.load(kPrefs());
+      if (t === 'hel' || t === 'hctx') {
+        if (!voice.kokoro.ready) { add('[test] Heart not ready: ' + voice.kokoro.state); return; }
+        const t0 = performance.now();
+        let chain = Promise.resolve();
+        await voice.kokoro.speak('Hey gorgeous. Can you hear me now?', ls.get(LS.kvoice, DEFAULT_KOKORO_VOICE), (c) => {
+          add(`[test] chunk ready after ${Math.round(performance.now() - t0)} ms`);
+          chain = chain.then(() => t === 'hel' ? voice._viaElement(c.pcm, c.rate, tok) : voice._viaCtx(c.pcm, c.rate, tok));
+        });
+        await chain;
+        add('[test] Heart test done');
+      }
+      if (t === 'copy') { await navigator.clipboard.writeText(box.querySelector('#dbgState').textContent + '\n\n' + logEl.textContent); add('[test] copied'); }
+      if (t === 'min') box.classList.toggle('min');
+    } catch (e) { add(`[test] ${t} FAILED: ${e.message || e}`); }
+  });
+}
