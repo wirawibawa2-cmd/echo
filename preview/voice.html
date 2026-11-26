@@ -1,0 +1,81 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="theme-color" content="#000000">
+<title>Echo – free voice preview</title>
+<style>
+body{margin:0;background:#000;color:#eef0f5;font:16px/1.45 -apple-system,system-ui,sans-serif;padding:calc(env(safe-area-inset-top) + 20px) 18px 40px}
+h1{font-size:22px;margin:0 0 4px} p.s{color:#9aa0ab;margin:0 0 18px;font-size:14px}
+.card{background:#121418;border:1px solid #23262d;border-radius:16px;padding:14px;margin:10px 0}
+.row{display:flex;align-items:center;gap:10px}.row .t{flex:1}.t b{display:block}.t small{color:#9aa0ab}
+button{font:600 15px -apple-system,system-ui;border:0;border-radius:12px;padding:11px 16px;background:#fff;color:#000}
+button.sec{background:#23262d;color:#fff}button:disabled{opacity:.45}
+#bar{height:8px;background:#23262d;border-radius:6px;overflow:hidden;margin:8px 0 4px}#bar i{display:block;height:100%;width:0;background:#e9ecf3;transition:width .2s}
+#status{font-size:13px;color:#c9ced8;min-height:1.4em} textarea{width:100%;box-sizing:border-box;background:#0b0c0f;color:#fff;border:1px solid #2a2d34;border-radius:12px;padding:10px;font:15px -apple-system,system-ui;min-height:70px}
+.star{color:#ffd28a}.log{font:12px ui-monospace,monospace;color:#8b919c;white-space:pre-wrap;margin-top:8px}
+</style></head><body>
+<h1>👻 Echo – free voice preview</h1>
+<p class="s">Kokoro-82M, open source (Apache-2.0), runs fully on this phone. No key, no server, no cost. First play downloads the voice model once (~95&nbsp;MB, then cached).</p>
+<div class="card">
+  <div id="status">Tap a Play button to start (one-time download).</div>
+  <div id="bar"><i></i></div>
+  <textarea id="txt">Well hello, gorgeous. I'm Echo, your pocket ghost. Ask me anything, I promise I'll only tease you a little.</textarea>
+</div>
+<div id="voices"></div>
+<button class="sec" id="stop" style="margin-top:8px">Stop</button>
+<div class="log" id="log"></div>
+<script type="module">
+const VOICES = [
+  ['af_heart', 'Heart', 'warm, sweet, expressive – best quality', true],
+  ['af_bella', 'Bella', 'bright, playful, a bit flirty'],
+  ['af_nicole', 'Nicole', 'soft, breathy, intimate'],
+  ['af_sky', 'Sky', 'light, youthful'],
+];
+const $ = (id) => document.getElementById(id), log = (s) => { $('log').textContent += s + '\n'; };
+let ctx = null, worker = null, ready = false, nextT = 0, srcs = [], tStart = 0, first = true;
+function unlock() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!ctx) ctx = new AC();
+  if (ctx.state !== 'running') ctx.resume();
+  const b = ctx.createBuffer(1, 1, 22050), s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start(0);
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
+}
+function getWorker() {
+  if (worker) return worker;
+  worker = new Worker('./kokoro-worker.js?v=7', { type: 'module' });
+  const t0 = performance.now();
+  worker.onmessage = ({ data }) => {
+    if (data.type === 'progress' && data.total) {
+      const pc = Math.min(100, data.loaded / data.total * 100);
+      $('bar').firstChild.style.width = pc.toFixed(0) + '%';
+      $('status').textContent = `Downloading voice model… ${(data.loaded / 1e6).toFixed(0)} / ${(data.total / 1e6).toFixed(0)} MB (one time only)`;
+    }
+    if (data.type === 'ready') { ready = true; $('bar').firstChild.style.width = '100%'; $('status').textContent = 'Voice ready ✓ (cached on this phone)'; log(`model ready in ${((performance.now() - t0) / 1000).toFixed(1)}s`); window.__ready = true; }
+    if (data.type === 'error') { $('status').textContent = 'Error: ' + data.error; log('error ' + data.error); window.__err = data.error; }
+    if (data.type === 'chunk') {
+      if (first) { first = false; const l = performance.now() - tStart; log(`first audio after ${(l / 1000).toFixed(2)}s`); window.__firstAudio = l; }
+      log(`sentence ${data.i + 1}: ${data.chars} chars → ${(data.pcm.length / data.rate).toFixed(1)}s audio in ${data.ms} ms`);
+      (window.__chunks = window.__chunks || []).push({ ms: data.ms, dur: data.pcm.length / data.rate });
+      const buf = ctx.createBuffer(1, data.pcm.length, data.rate); buf.getChannelData(0).set(data.pcm);
+      const s = ctx.createBufferSource(); s.buffer = buf; s.connect(ctx.destination);
+      const at = Math.max(ctx.currentTime + 0.05, nextT); s.start(at); nextT = at + buf.duration; srcs.push(s);
+      if (data.last) $('status').textContent = 'Playing ✓';
+    }
+  };
+  worker.postMessage({ type: 'load', dtype: 'q8' });
+  return worker;
+}
+function play(v) {
+  unlock(); stop();
+  first = true; tStart = performance.now(); nextT = 0;
+  if (ready) $('status').textContent = 'Generating…';
+  getWorker().postMessage({ type: 'speak', text: $('txt').value, voice: v, id: Date.now() });
+}
+function stop() { worker?.postMessage({ type: 'stop' }); srcs.forEach(s => { try { s.stop(); } catch {} }); srcs = []; }
+$('stop').onclick = stop;
+for (const [id, name, desc, star] of VOICES) {
+  const d = document.createElement('div'); d.className = 'card row';
+  d.innerHTML = `<div class="t"><b>${name}${star ? ' <span class="star">★ pick</span>' : ''}</b><small>${id} · ${desc}</small></div><button>Play</button>`;
+  d.querySelector('button').onclick = () => play(id); $('voices').appendChild(d);
+}
+window.__play = play;
+</script></body></html>
