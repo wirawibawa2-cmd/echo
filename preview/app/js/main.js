@@ -274,6 +274,8 @@ el.form.addEventListener('submit', (e) => { e.preventDefault(); unlockAudio(); s
 if (ls.get('ghost.voiceV', '') !== '3') { if (ls.get(LS.gvoice, '') === 'Aoede') ls.set(LS.gvoice, DEFAULT_GEMINI_VOICE); ls.set('ghost.voiceV', '3'); }
 // v7: the free on-device Heart voice becomes the default once (a later pick is kept)
 if (ls.get('ghost.voiceV', '') !== '7') { ls.set(LS.engine, 'kokoro'); ls.set('ghost.voiceV', '7'); }
+// v7.3: once, switch audio output back to the <audio> player (plays with the silent switch on; Web Audio may not)
+if (ls.get('echo.aoutV', '') !== '73') { ls.set('echo.audioOut', 'element'); ls.set('echo.aoutV', '73'); }
 const kPrefs = () => ({ model: ls.get(LS.kmodel, DEFAULT_KOKORO_MODEL), device: ls.get(LS.kdevice, 'auto'), opt: 'disabled' });
 const voicePrefs = () => ({ kokoro: kPrefs(), kokoroVoice: ls.get(LS.kvoice, DEFAULT_KOKORO_VOICE), kokoroMode: ls.get(LS.kmode, 'stream'), audioOut: ls.get(LS.aout, 'element'), engine: ls.get(LS.engine, 'kokoro'), geminiVoice: ls.get(LS.gvoice, DEFAULT_GEMINI_VOICE), deviceVoice: ls.get(LS.dvoice, ''), ttsModel: ls.get(LS.ttsModel, TTS_MODELS[0]) });
 const voice = new Voice({
