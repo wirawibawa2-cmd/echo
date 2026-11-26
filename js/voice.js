@@ -77,7 +77,18 @@ export class Voice {
     try { if (this.synth) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; this.synth.speak(u); } } catch {}
   }
 
+  // Human-readable name of the voice that will be / was used.
+  describe(lang) {
+    if (this.lastUsed) return this.lastUsed;
+    const p = this.getPrefs();
+    if (p.engine !== 'device' && this.getKey() && Date.now() > this.ttsFailUntil) return `Gemini ${p.geminiVoice || 'Aoede'}`;
+    const v = this.bestDeviceVoice(lang);
+    const dev = /iPhone|iPad|Macintosh/.test(navigator.userAgent) ? 'iPhone' : 'Device';
+    return v ? `${dev} – ${v.name}${p.engine !== 'device' && !this.getKey() ? ' (add a Gemini key for the AI voice)' : ''}` : `${dev} default voice`;
+  }
+
   bestDeviceVoice(lang) {
+    if (this.synth && !this.voices.length) this.voices = this.synth.getVoices();
     const pref = this.getPrefs().deviceVoice;
     if (pref) { const v = this.voices.find(v => v.voiceURI === pref || v.name === pref); if (v && (v.lang || '').toLowerCase().startsWith(lang)) return v; }
     let best = null, bs = -1;
@@ -118,7 +129,7 @@ export class Voice {
     const useGemini = !opts.device && prefs.engine !== 'device' && this.getKey() && this.ctx && Date.now() > this.ttsFailUntil;
     this.speaking = true; this.onStart?.();
     if (useGemini) {
-      try { await this._speakGemini(clean, tok, prefs); return; }
+      try { await this._speakGemini(clean, tok, prefs); this.lastUsed = `Gemini ${prefs.geminiVoice || 'Aoede'}`; return; }
       catch (e) {
         if (tok !== this.token) return;
         console.warn('Gemini TTS unavailable, using device voice:', e.message || e);
@@ -178,6 +189,7 @@ export class Voice {
     return new Promise((resolve) => {
       if (!this.synth) { setTimeout(() => { if (tok === this.token) this._finish(); resolve(); }, Math.min(4000, 600 + text.length * 35)); return; }
       const v = this.bestDeviceVoice(lang);
+      this.lastUsed = `${/iPhone|iPad|Macintosh/.test(navigator.userAgent) ? 'iPhone' : 'Device'} – ${v ? v.name : 'default voice'}`;
       const parts = sentences(text);
       let i = 0;
       const next = () => {

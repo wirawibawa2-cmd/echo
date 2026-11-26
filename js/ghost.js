@@ -1,7 +1,7 @@
 // Procedural 3D ghost mascot (three.js). Exposes a small API: setState(), react(), speakLevel.
 import * as THREE from 'three';
 import { RoomEnvironment } from '../vendor/RoomEnvironment.js';
-import { buildFX, updateFX } from './ghost-fx.js';
+import { buildFX, updateFX } from './ghost-fx.js?v=2';
 
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));
@@ -42,6 +42,10 @@ export const DESIGNS = {
   h: { H: 2.4, headR: 0.58, headH: 0.7, flare: 0.5, flareP: 1.8, taper: 0, fold: 0.07, foldF: 5, fold2: 0.0, hemA: 0.1, hemR: 0.04, hemF: 5, waveSpd: 0.9,
        mat: 'paper', eyes: 'holes', eyeW: 0.1, eyeH: 0.18, eyeSp: 0.36, faceTop: 0.64, mouth: false, blush: false, arms: 'none', bob: 0.08,
        render: 'lowpoly', seg: 10, lowProf: 11, pool: 0.8, light: 'moody', black: true },
+  // SHEET "Echo": classic white bedsheet ghost, matte cloth, flowing hem, two black oval eye holes (default).
+  sheet: { H: 1.87, pool2: 0.75, frameH: 2.4, headR: 0.6, headH: 0.72, flare: 0.5, flareP: 2.3, taper: 0, fold: 0.12, foldF: 7, fold2: 0.05, hemA: 0.12, hemR: 0.08, hemF: 7, waveSpd: 1.25,
+       mat: 'cloth', eyes: 'holes', eyeW: 0.095, eyeH: 0.15, eyeSp: 0.34, faceTop: 0.64, eyeRange: [0.3, 0.26], mouth: false, blush: false, arms: 'none', bob: 0.09, heavy: true,
+       bump: 0.25, pool: 0.25, light: 'soft', halo: 0.38, tapSquint: true, cloth: true },
 };
 
 export class Ghost {
@@ -66,6 +70,7 @@ export class Ghost {
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.ACESFilmicToneMapping;
     r.toneMappingExposure = 1.05;
+    if (this.D.cloth) { r.shadowMap.enabled = true; r.shadowMap.type = THREE.PCFShadowMap; r.toneMappingExposure = 1.2; }
 
     this.scene = new THREE.Scene();
     const pmrem = new THREE.PMREMGenerator(r);
@@ -94,6 +99,14 @@ export class Ghost {
     this.glowLight = fill;
     const L = this.D.light;
     if (L === 'moody') { key.intensity = 0.55; warm.intensity = 5.5; warm.position.set(2.2, 2.2, -3); cool.intensity = 1.2; s.children[0].intensity = 0.25; }
+    if (L === 'soft') {   // directional key from the upper-left side + soft rims; low ambient so folds read in 3D
+      key.intensity = 3.8; key.position.set(-3.2, 3.4, 1.7); warm.color.set(0xfff0e4); warm.intensity = 1.6; cool.color.set(0xdde8ff); cool.intensity = 1.5;
+      s.children[0].intensity = 0.42; s.children[0].groundColor.set(0x15171c);
+      const fillF = new THREE.DirectionalLight(0xeef2ff, 0.3); fillF.position.set(2.8, 0.6, 3.5); s.add(fillF);
+      key.castShadow = true; key.shadow.mapSize.set(1024, 1024); key.shadow.radius = 5; key.shadow.blurSamples = 12;
+      key.shadow.bias = -0.0006; key.shadow.normalBias = 0.025;
+      const sc = key.shadow.camera; sc.left = -1.8; sc.right = 1.8; sc.top = 2.4; sc.bottom = -1.2; sc.near = 0.5; sc.far = 12;
+      this.keyLight = key; s.add(key.target); }
     if (L === 'chrome') { key.intensity = 1.2; warm.intensity = 6; warm.position.set(3, 1.2, -1.5); cool.intensity = 4; cool.color.set(0x7fb0ff); }
     if (L === 'flat') { key.intensity = 2.0; key.position.set(-0.5, 3, 4); warm.intensity = 1.2; warm.color.set(0xffe2c8); cool.intensity = 0.6; s.children[0].intensity = 0.9; }
     if (this.D.pool) {   // warm light pool under the ghost lights the inside of the hem
@@ -163,7 +176,13 @@ export class Ghost {
     }[D.mat];
     this.bodyMat = new THREE.MeshPhysicalMaterial({ metalness: 0, ...matOpts });
     if (D.mat === 'chrome') this.scene.environmentIntensity = 1.0;
-    if (D.bump) {
+    if (D.cloth) {   // cotton/linen weave height map + slight roughness variation
+      const { bump, rough } = this._weaveTex();
+      bump.repeat.set(9, 4); rough.repeat.set(3, 1.5);
+      this.bodyMat.bumpMap = bump; this.bodyMat.bumpScale = 0.55;
+      this.bodyMat.roughnessMap = rough; this.bodyMat.roughness = 1.0;
+      this.bodyMat.color.set(0xffffff); this.bodyMat.sheen = 0.55; this.bodyMat.sheenColor.set(0xf4f7ff);
+    } else if (D.bump) {
       const nt = this._noiseTex();
       nt.repeat.set(10, 5);
       this.bodyMat.bumpMap = nt; this.bodyMat.bumpScale = 1.6 * D.bump;
@@ -174,8 +193,13 @@ export class Ghost {
     this.bodyMat.onBeforeCompile = (sh) => {
       sh.uniforms.uGlow = { value: 0 };
       sh.uniforms.uTime = { value: 0 }; this._timeUniform = sh.uniforms.uTime;
-      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying float vObjY;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObjY = position.y;');
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying float vObjY;' + (D.cloth ? '\nattribute float aAO;\nvarying float vAO;' : ''))
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObjY = position.y;' + (D.cloth ? '\nvAO = aAO;' : ''));
+      if (D.cloth) sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vAO;')
+        .replace('#include <aomap_fragment>', `#include <aomap_fragment>
+          float aoK = vAO * (gl_FrontFacing ? 1.0 : 0.42);
+          reflectedLight.indirectDiffuse *= aoK; reflectedLight.directDiffuse *= mix(0.45, 1.0, aoK);
+          reflectedLight.indirectSpecular *= aoK;`);
       sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vObjY;\nuniform float uTime;');
       this._glowUniform = sh.uniforms.uGlow;
       sh.fragmentShader = sh.fragmentShader
@@ -184,7 +208,7 @@ export class Ghost {
           vec3 nV = normalize(normal);
           float fr = pow(1.0 - clamp(abs(dot(nV, normalize(vViewPosition))), 0.0, 1.0), 2.6);
           vec3 rimCol = mix(vec3(0.55,0.68,1.0), vec3(1.0,0.55,0.25), smoothstep(-0.6, 0.6, nV.x));
-          outgoingLight += rimCol * fr * (${rimK.toFixed(2)} + uGlow * 0.9);
+          outgoingLight += rimCol * fr * (${(D.cloth ? 0.22 : rimK).toFixed(2)} + uGlow * 0.9)${D.cloth ? ' * (gl_FrontFacing ? vAO : 0.2)' : ''};
           outgoingLight += vec3(1.0,0.5,0.15) * uGlow * 0.06;
           ${hemGlow ? `float hg = 1.0 - smoothstep(-0.1, 0.95, vObjY);
             float flick = 0.85 + 0.15 * sin(uTime * 3.0 + vObjY * 9.0);
@@ -195,7 +219,9 @@ export class Ghost {
           ${ethereal ? 'diffuseColor.a = mix(0.28, 0.95, fr) ; outgoingLight += vec3(1.0,0.45,0.1) * (1.0 - fr) * 0.18;' : ''}
           #include <opaque_fragment>`);
     };
+    if (D.cloth) geo.setAttribute('aAO', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count).fill(1), 1));
     this.sheet = new THREE.Mesh(geo, this.bodyMat);
+    if (D.cloth) { this.sheet.castShadow = true; this.sheet.receiveShadow = true; }
     this.body.add(this.sheet);
 
     // --- Face group (on the front of the dome)
@@ -344,12 +370,24 @@ export class Ghost {
     this.shadow = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 2.2), new THREE.MeshBasicMaterial({ map: shTex, transparent: true, depthWrite: false }));
     this.shadow.rotation.x = -Math.PI / 2; this.shadow.position.y = -0.6;
     root.add(this.shadow);
+    if (this.D.halo) {
+      this.halo = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 4.2), new THREE.MeshBasicMaterial({ map: this._radialTex('rgba(235,240,255,0.55)', 'rgba(235,240,255,0)'), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: this.D.halo }));
+      this.halo.position.set(0, this.D.H * 0.55, -1.0); root.add(this.halo);
+    }
     if (this.D.pool) {
       const ac = new THREE.Color(this.opts.accent || 0xff8a30), rgb = `${Math.round(ac.r * 255)},${Math.round(ac.g * 255)},${Math.round(ac.b * 255)}`;
       const pt = this._radialTex(`rgba(${rgb},1)`, `rgba(${rgb},0)`);
       this.pool = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 2.4), new THREE.MeshBasicMaterial({ map: pt, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.85 * this.D.pool }));
       this.pool.rotation.x = -Math.PI / 2; this.pool.position.y = -0.59; root.add(this.pool);
       this.shadow.scale.setScalar(1.5);
+    }
+    if (this.D.cloth) {
+      if (this.pool) { this.pool.material.map = this._radialTex('rgba(236,240,248,1)', 'rgba(236,240,248,0)'); this.pool.scale.setScalar(1); this.pool.renderOrder = 1; }
+      this.pool.geometry = new THREE.PlaneGeometry(3.4, 2.6);
+      this.catcher = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), new THREE.ShadowMaterial({ color: 0x05070c, opacity: 0.55, transparent: true, depthWrite: false }));
+      this.catcher.rotation.x = -Math.PI / 2; this.catcher.position.y = -0.6; this.catcher.receiveShadow = true; this.catcher.renderOrder = 2; root.add(this.catcher);
+      this.shadow.material.map = this._radialTex('rgba(4,6,10,0.85)', 'rgba(4,6,10,0)'); this.shadow.renderOrder = 3; this.shadow.scale.setScalar(0.85);
+      this.shadowBase = 0.85;
     }
   }
 
@@ -389,6 +427,30 @@ export class Ghost {
     const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
   }
 
+  _weaveTex() {
+    // plain-weave cotton/linen: over/under threads with slub (thickness) variation, as a height map
+    const N = 512, T = 32, c = document.createElement('canvas'); c.width = c.height = N;
+    const g = c.getContext('2d'), img = g.createImageData(N, N), d = img.data, cell = N / T;
+    const slubU = [], slubV = [];
+    for (let i = 0; i < T; i++) { slubU.push(0.75 + Math.random() * 0.5); slubV.push(0.75 + Math.random() * 0.5); }
+    const rough = document.createElement('canvas'); rough.width = rough.height = 256;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const cx = Math.floor(x / cell), cy = Math.floor(y / cell), fx = (x % cell) / cell, fy = (y % cell) / cell;
+      const over = (cx + cy) % 2 === 0;                 // warp over weft?
+      const warp = Math.sin(fx * Math.PI) * slubU[cx] * (over ? 1 : 0.55) * (0.6 + 0.4 * Math.sin(fy * Math.PI));
+      const weft = Math.sin(fy * Math.PI) * slubV[cy] * (over ? 0.55 : 1) * (0.6 + 0.4 * Math.sin(fx * Math.PI));
+      let v = Math.max(warp, weft) * 0.8 + (Math.random() - 0.5) * 0.12;
+      const k = (y * N + x) * 4; d[k] = d[k + 1] = d[k + 2] = Math.max(0, Math.min(255, 40 + v * 200)); d[k + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+    const rg = rough.getContext('2d'), ri = rg.createImageData(256, 256);
+    for (let i = 0; i < 256 * 256; i++) { const v = 215 + Math.random() * 40; ri.data[i * 4] = ri.data[i * 4 + 1] = ri.data[i * 4 + 2] = v; ri.data[i * 4 + 3] = 255; }
+    rg.putImageData(ri, 0, 0); rg.filter = 'blur(6px)'; rg.drawImage(rough, 0, 0); rg.filter = 'none';
+    const bump = new THREE.CanvasTexture(c), rt = new THREE.CanvasTexture(rough);
+    for (const t of [bump, rt]) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy()); }
+    return { bump, rough: rt };
+  }
+
   _radialTex(c0, c1) {
     const c = document.createElement('canvas'); c.width = c.height = 128;
     const g = c.getContext('2d'); const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
@@ -415,7 +477,7 @@ export class Ghost {
     const k = ((this.D.frameH || this.D.H) + 0.6) / 2.75 * (this.D.zoom || 1) * (this.opts.compact ? 1.42 : 1);               // frame taller designs
     const dist = (narrow ? 9.0 : 7.6) * k;
     const look = this.D.H / 2 - (narrow ? 1.05 : 0.72) * k * (this.opts.compact ? 1.25 : 1) + (this.D.zoom ? 0.35 : 0);
-    this.camera.position.set(0, look + 0.58, dist);
+    this.camera.position.set(0, look + (this.D.cloth ? 2.3 : 0.58), dist);
     this.camera.lookAt(0, look, 0);
     this.camera.updateProjectionMatrix();
   }
@@ -423,12 +485,17 @@ export class Ghost {
   setPointer(nx, ny) { this.pointer.set(nx, ny); this.pointerActive = true; this.lastPointerTime = this.time; }
   dragBy(dx) { this.dragRot += dx * 0.012; this.dragVel = dx * 0.012 / 0.016; }
   setState(s) { this.state = s; }
-  react() { this.happy = 1; this.spin = Math.PI * 2; this.bounceT = 0; }
+  react() {
+    this.happy = 1; this.bounceT = 0;
+    if (this.D.tapSquint) { this.wiggle = 1; } else this.spin = Math.PI * 2;
+  }
+  surprise() { this.widen = 1; }
 
   _deformSheet(t, wave) {
     const pos = this.bodyGeo.attributes.position;
     const a = pos.array, b = this.basePos, H = this.H;
     const n = pos.count;
+    const aoAttr = this.bodyGeo.attributes.aAO, aoA = aoAttr ? aoAttr.array : null;
     for (let i = 0; i < n; i++) {
       const k = i * 3;
       const x = b[k], y = b[k + 1], z = b[k + 2];
@@ -446,6 +513,12 @@ export class Ghost {
       if (D.heavy) dy += 0.06 * Math.sin(th * 2 + 0.7) * hem;   // uneven sheet length
       if (D.lowProf) { const hsh = Math.sin(x * 97.13 + z * 53.71 + y * 31.37) * 43758.5453; dr += ((hsh - Math.floor(hsh)) - 0.5) * 0.07 * (0.3 + fold); }
       let s = (r + dr) / r;
+      if (aoA) {     // cavity AO: inner fold valleys + under the drape + neck crease
+        const fv = (D.fold * Math.sin(th * D.foldF) + D.fold2 * Math.sin(th * 9 - t * 0.4 + 1.0) + 0.03 * Math.sin(th * 13 + 2.0)) * fold;
+        const cav = Math.max(0, -fv / (D.fold + D.fold2 + 0.03));
+        const under = smooth(0.35, -0.05, y) * 0.18;
+        aoA[i] = Math.max(0.3, 1 - cav * 0.75 - under);
+      }
       let ox = 0, oz = 0;
       if (D.tail) {                                     // wispy tail: lower body bends and swirls
         const w = Math.pow(smooth(1.3, -0.1, y), 2);
@@ -455,7 +528,7 @@ export class Ghost {
       }
       a[k] = x * s + ox; a[k + 1] = y + dy; a[k + 2] = z * s + oz;
     }
-    pos.needsUpdate = true;
+    pos.needsUpdate = true; if (aoAttr) aoAttr.needsUpdate = true;
     this.bodyGeo.computeVertexNormals();
     // fix lathe seam normals (first and last columns share positions)
     const nr = this.bodyGeo.attributes.normal.array, P = this.profN, last = (this.segCols - 1) * P;
@@ -490,19 +563,28 @@ export class Ghost {
     // --- look target
     let lx = 0, ly = 0;
     if (this.pointerActive && t - this.lastPointerTime < 4) { lx = this.pointer.x; ly = this.pointer.y; }
-    else { lx = Math.sin(t * 0.5) * 0.35; ly = Math.sin(t * 0.33) * 0.15; }
-    if (st === 'thinking') { lx = 0.45 + Math.sin(t * 1.3) * 0.15; ly = 0.65; }
+    else if (this.tilt && t - this.tilt.t < 1.5) { lx = this.tilt.x; ly = this.tilt.y; }
+    else {
+      // idle: glance around (quick saccades to random spots, then hold)
+      this._wT = (this._wT ?? 0) - dt;
+      if (this._wT <= 0) { this._wT = 1.2 + Math.random() * 2.4; this._wX = (Math.random() * 2 - 1) * 0.75; this._wY = (Math.random() * 2 - 1) * 0.45; if (Math.random() < 0.3) { this._wX = 0; this._wY = 0; } }
+      lx = this._wX; ly = this._wY;
+    }
+    if (this.iconMode) { lx = 0; ly = 0.05; }
+    if (st === 'thinking') { lx = (this.D.tapSquint ? 0.15 : 0.45) + Math.sin(t * 1.3) * 0.15; ly = 0.75; }
     if (st === 'listening') { ly = Math.max(ly, 0) * 0.5; }
     this.lookX = damp(this.lookX, lx, 6, dt); this.lookY = damp(this.lookY, ly, 6, dt);
 
     this.body.rotation.y = this.lookX * 0.45 + this.dragRot + this.spin;
     this.body.rotation.x = -this.lookY * 0.12 + (st === 'listening' ? 0.06 : 0);
-    this.body.rotation.z = (this.D.tilt || 0) + Math.sin(t * 0.9) * 0.04 + (st === 'thinking' ? Math.sin(t * 1.4) * 0.07 : 0) - driftX * 0.3;
+    this.wiggle = Math.max(0, (this.wiggle || 0) - dt * 1.4);
+    this.body.rotation.z = (this.D.tilt || 0) + Math.sin(t * 22) * 0.07 * this.wiggle + Math.sin(t * 0.9) * 0.04 + (st === 'thinking' ? Math.sin(t * 1.4) * 0.07 : 0) - driftX * 0.3;
 
     // eyes slide over the dome toward the pointer
     for (const e of this.eyes) {
-      e.pivot.rotation.y = e.pivot.userData.baseY + this.lookX * 0.22;
-      e.pivot.rotation.x = 0.06 - this.lookY * 0.18;
+      const er = this.D.eyeRange || [0.22, 0.18];
+      e.pivot.rotation.y = e.pivot.userData.baseY + this.lookX * er[0];
+      e.pivot.rotation.x = 0.06 - this.lookY * er[1];
     }
     this.mouthPivot.rotation.y = this.lookX * 0.16;
     this.mouthPivot.rotation.x = 0.3 - this.lookY * 0.1;
@@ -513,9 +595,12 @@ export class Ghost {
     this.blink = Math.max(0, this.blink - dt * 7);
     const blinkS = 1 - Math.sin(this.blink * Math.PI) * 0.92;
     this.happy = Math.max(0, this.happy - dt * 0.7);
-    const happyEye = 1 - smooth(0, 0.3, this.happy) * 0.55;            // squinty happy eyes
-    const listenEye = st === 'listening' ? 1.12 : 1;
-    for (const e of this.eyes) { const b = e.ball.userData.bs; e.ball.scale.set(b[0] * listenEye, b[1] * blinkS * happyEye * listenEye, b[2]); if (e.ball.userData.ring) e.ball.userData.ring.scale.set(0.1 * listenEye, 0.15 * blinkS * happyEye * listenEye, 0.05); }
+    const happyEye = 1 - smooth(0, 0.3, this.happy) * (this.D.tapSquint ? 0.85 : 0.55);            // squinty happy eyes
+    this.widen = Math.max(0, (this.widen || 0) - dt * 0.9);
+    let listenEye = (st === 'listening' ? 1.12 + Math.sin(t * 6) * 0.07 : 1) * (1 + smooth(0, 0.4, this.widen) * 0.28);
+    if (this.iconMode) { this.blink = 0; }
+    const talkSquash = st === 'speaking' ? 1 - 0.22 * (this.speakLevel || 0) : 1;
+    for (const e of this.eyes) { const b = e.ball.userData.bs; e.ball.scale.set(b[0] * listenEye * (2 - talkSquash), b[1] * blinkS * happyEye * listenEye * talkSquash, b[2]); if (e.ball.userData.ring) e.ball.userData.ring.scale.set(0.1 * listenEye, 0.15 * blinkS * happyEye * listenEye, 0.05); }
 
     // mouth
     let mo = 1;
@@ -555,12 +640,12 @@ export class Ghost {
 
     // shadow follows height
     const h = this.body.position.y;
-    const ss = 1 - h * 0.35;
+    const ss = (1 - h * 0.35) * (this.shadowBase || 1);
     this.shadow.scale.set(ss, ss, 1);
     this.shadow.material.opacity = Math.max(0.25, 0.95 - h * 0.9) * (this.D.mat === 'ethereal' ? 0.5 : 1);
     if (this._timeUniform) this._timeUniform.value = t;
-    if (this.pool) { const ps = 1 - h * 0.3; this.pool.scale.set(ps, ps, 1); this.pool.position.x = driftX; this.pool.material.opacity = (0.75 + 0.15 * Math.sin(t * 1.7)) * this.D.pool * (1 - h * 0.4) + this._g * 0.3; }
-    if (this.underLight) this.underLight.intensity = 6 * this.D.pool * (1 - h * 0.5) + this._g * 3;
+    if (this.pool) { const ps = 1 - h * 0.3; this.pool.scale.set(ps, ps, 1); this.pool.position.x = driftX; this.pool.material.opacity = (0.75 + 0.15 * Math.sin(t * 1.7)) * (this.D.pool2 || this.D.pool) * (1 - h * 0.4) + this._g * 0.3; }
+    if (this.underLight) this.underLight.intensity = (6 * this.D.pool * (1 - h * 0.5)) * (this.D.cloth ? 0 : 1) + this._g * (this.D.cloth ? 0.6 : 3);
     if (this.embers) this.embers.forEach(m => m.material.opacity = (0.45 + 0.2 * Math.sin(t * 2.3)) + this._g * 0.4);
     if (this.innerGlow) { this.innerGlow.material.opacity = 0.75 + this._g * 0.6 + Math.sin(t * 2) * 0.1; this.innerGlow.lookAt(this.camera.position); }
     this.shadow.position.x = driftX;

@@ -1,6 +1,6 @@
-import { Ghost } from './ghost.js';
-import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js';
-import { Voice, GEMINI_VOICES, TTS_MODELS } from './voice.js';
+import { Ghost } from './ghost.js?v=2';
+import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=2';
+import { Voice, GEMINI_VOICES, TTS_MODELS } from './voice.js?v=2';
 
 // ====== Easy-to-change settings ======
 const BOT_NAME = 'Echo';
@@ -115,7 +115,8 @@ document.querySelector('.sub-name').textContent = BOT_NAME;
 // ---------- 3D ----------
 let ghost = null;
 // Defaults: Echo particle ghost (e) on the premium black UI (4). ?ghost=cute brings back the original.
-const DEFAULT_GHOST = 'e', DEFAULT_UI = '4';
+const APP_VERSION = 'v2';
+const DEFAULT_GHOST = 'sheet', DEFAULT_UI = '4';
 let DESIGN = (new URLSearchParams(location.search).get('ghost') || DEFAULT_GHOST).toLowerCase();
 if (DESIGN === 'cute') DESIGN = 'default';
 document.body.dataset.ghost = DESIGN;
@@ -138,7 +139,20 @@ function lookAtEvent(e) {
   // the ghost sits in the upper-middle of the screen; re-center the look target on it
   ghost?.setPointer(Math.max(-1, Math.min(1, nx * 1.3)), Math.max(-1, Math.min(1, (ny - 0.25) * 1.3)));
 }
+// device tilt -> eyes (iOS asks permission on the first tap of the ghost)
+let tiltAsked = false;
+function onTilt(ev) {
+  if (!ghost || ev.gamma == null) return;
+  ghost.tilt = { x: Math.max(-1, Math.min(1, ev.gamma / 30)), y: Math.max(-1, Math.min(1, -(ev.beta - 50) / 30)), t: ghost.time };
+}
+function askTilt() {
+  if (tiltAsked || !('DeviceOrientationEvent' in window)) return; tiltAsked = true;
+  const D = window.DeviceOrientationEvent;
+  if (typeof D.requestPermission === 'function') D.requestPermission().then(r => { if (r === 'granted') addEventListener('deviceorientation', onTilt); }).catch(() => {});
+  else addEventListener('deviceorientation', onTilt);
+}
 el.canvas.addEventListener('pointerdown', (e) => {
+  askTilt();
   unlockAudio();
   down = { x: e.clientX, y: e.clientY, lastX: e.clientX, moved: 0, t: performance.now() };
   try { el.canvas.setPointerCapture(e.pointerId); } catch {}
@@ -225,6 +239,7 @@ async function send(text) {
   busy = true; el.send.disabled = true;
   stopSpeaking();
   addMsg('user', text);
+  ghost?.surprise?.();
   document.body.classList.add('has-chat');
   el.input.value = '';
   setState('thinking');
@@ -284,7 +299,7 @@ const voicePrefs = () => ({ engine: ls.get(LS.engine, 'gemini'), geminiVoice: ls
 const voice = new Voice({
   getKey, getPrefs: voicePrefs,
   onLevel: (v) => { if (ghost) ghost.speakLevel = v; },
-  onStart: () => setState('speaking'),
+  onStart: () => { setState('speaking'); if (!el.sheet.hidden) showUsing(); },
   onEnd: () => { if (ghost) ghost.speakLevel = 0; if (!busy && !recognizing) setState('idle'); },
 });
 function unlockAudio() { voice.unlock(); }
@@ -353,14 +368,18 @@ function fillDeviceVoices() {
   vEl.d.value = ls.get(LS.dvoice, '');
 }
 function syncVoiceUI() { const dev = vEl.engine.value === 'device'; vEl.g.hidden = dev; vEl.d.hidden = !dev; }
-vEl.engine.addEventListener('change', syncVoiceUI);
+vEl.engine.addEventListener('change', () => { syncVoiceUI(); saveVoicePrefs(); voice.lastUsed = null; showUsing(); });
+vEl.g.addEventListener("change", () => { saveVoicePrefs(); voice.lastUsed = null; showUsing(); });
+vEl.d.addEventListener("change", () => { saveVoicePrefs(); voice.lastUsed = null; showUsing(); });
 function saveVoicePrefs() { ls.set(LS.engine, vEl.engine.value); ls.set(LS.gvoice, vEl.g.value); ls.set(LS.dvoice, vEl.d.value); }
 vEl.test.addEventListener('click', () => {
   unlockAudio(); saveVoicePrefs();
   const k = el.key.value.trim(); if (k && k !== getKey()) ls.set(LS.key, k);
   speak(lang === 'id' ? `Halo! Aku ${BOT_NAME}. Begini suaraku sekarang, lebih natural kan?` : `Hey! I'm ${BOT_NAME}. This is how I sound now. Pretty natural, right?`);
 });
+function showUsing() { document.getElementById('voiceUsing').textContent = 'Using: ' + voice.describe(lang); }
 function openSheet() {
+  setTimeout(showUsing, 0);
   fillDeviceVoices(); vEl.engine.value = ls.get(LS.engine, 'gemini'); vEl.g.value = ls.get(LS.gvoice, 'Aoede'); syncVoiceUI();
   el.key.value = getKey(); el.key.type = 'password'; el.showKey.textContent = 'Show';
   el.model.value = getModel(); el.persist.checked = ls.get(LS.persist) === '1';
@@ -395,3 +414,5 @@ document.querySelector('.greet .g-hi').textContent = `Hi, I'm ${BOT_NAME}!`;
 
 // test hook for automated screenshots
 window.__ghost = { send, ghost: () => ghost, setState };
+if (new URLSearchParams(location.search).has('icon') && ghost) { ghost.iconMode = true; document.body.classList.add('iconmode'); }
+document.getElementById('verLabel').textContent = `Echo ${APP_VERSION}`;
