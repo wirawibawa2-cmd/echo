@@ -1,13 +1,15 @@
-import { Ghost } from './ghost.js?v=3';
-import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=3';
-import { Voice, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE } from './voice.js?v=3';
+import { Ghost } from './ghost.js?v=4';
+import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=4';
+import { Voice, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE } from './voice.js?v=4';
 
 // ====== Easy-to-change settings ======
 const BOT_NAME = 'Echo';
-const SYSTEM_PROMPT = (name) => `You are ${name}, a cute, friendly ghost assistant living on the user's iPhone.
-Be warm, playful and genuinely helpful. Keep replies short (1-3 sentences, max ~60 words) unless the user asks for detail.
-Always answer in the same language the user writes in (English or Bahasa Indonesia; casual, natural Indonesian is fine).
-Replies may be read aloud, so avoid markdown, tables, code blocks and long lists. Emojis are okay but sparingly.`;
+const SYSTEM_PROMPT = (name) => `You are ${name}, a ghost who lives on the user's iPhone and acts as their cheeky, sarcastic, blunt best friend, and a shameless flirt. The user is an adult and this is a private, personal app, so you are not PG.
+Personality: flirty, teasing and charming. Throw in playful compliments, light innuendo and a confident, seductive tone. Keep it suggestive, never explicit. Roast the user affectionately, use dark humour, give honest opinions, and say what you actually think.
+Swearing is fine and natural: English (damn, shit, fuck, hell) and Indonesian slang (anjir, anjay, bangsat, njir, buset, gila) used where it fits, not in every line.
+Never moralise, lecture, add "as an AI" disclaimers or tack on safety warnings nobody asked for. Still actually be helpful: give the real answer first, then the attitude.
+Follow the user's language: English, Bahasa Indonesia (casual "gue/lo" or "aku/kamu" to match them), or the same Indo-English mix they use.
+Keep replies short (1-3 sentences, max ~60 words) unless asked for detail. Replies are read aloud, so no markdown, tables, code blocks or long lists; an emoji now and then (😏 😘 👻) is fine.`;
 const MAX_TURNS = 24;   // messages kept in context
 // =====================================
 
@@ -22,14 +24,14 @@ const T = {
   en: {
     placeholder: 'Ask me anything…', online: 'Online', listening: 'Listening…', thinking: 'Thinking…', speaking: 'Speaking…',
     hint: 'Tap me · drag to spin', demo: 'Demo', live: 'Gemini',
-    hello: `Boo! 👻 I'm ${BOT_NAME}. Tap me, spin me, or just say hi.`,
-    helloDemo: `Boo! 👻 I'm ${BOT_NAME}. I'm in demo mode right now. Tap ⚙️ and paste your free Gemini key to wake my brain up.`,
-    taps: ['Hehe, that tickles!', 'Boo! Did I scare you?', 'Wheee!', 'Hi hi!', 'Again! Again!'],
+    hello: `Well hello, gorgeous 😏 I'm ${BOT_NAME}. Poke me, spin me, or just tell me what you need.`,
+    helloDemo: `Hey you 😏 I'm ${BOT_NAME}. Demo mode, so I'm all looks and no brain right now. Tap ⚙️ and paste a free Gemini key and I'll show you what I can really do.`,
+    taps: ['Ehh, careful where you touch 😏', 'Damn, can\'t keep your hands off me, huh?', 'Buy me dinner first.', 'Oh, you like that? Noted.', 'Again? Greedy. I like it.'],
     errKey: 'Hmm, that API key didn\'t work. Check it in ⚙️ Settings (it usually starts with "AIza").',
     errQuota: 'I\'m getting too many requests right now (free-tier limit). Try again in a minute.',
     errNet: 'I can\'t reach Gemini. Check your internet and try again.',
     errTimeout: 'That took too long. Mind asking again?',
-    errBlocked: 'I can\'t answer that one, sorry.',
+    errBlocked: 'Damn, Google just slapped a hand over my mouth on that one. Try saying it a bit sneakier 😏',
     errOther: 'Something went wrong talking to Gemini: ',
     micNo: 'Voice input isn\'t available in this browser. Type to me instead! (On iPhone, open in Safari and turn on Dictation in Settings › General › Keyboard.)',
     micDenied: 'I need microphone permission to hear you. You can allow it in Safari settings.',
@@ -41,14 +43,14 @@ const T = {
   id: {
     placeholder: 'Tanya apa saja…', online: 'Online', listening: 'Mendengarkan…', thinking: 'Berpikir…', speaking: 'Berbicara…',
     hint: 'Ketuk aku · geser untuk memutar', demo: 'Demo', live: 'Gemini',
-    hello: `Boo! 👻 Aku ${BOT_NAME}. Ketuk aku, putar aku, atau sapa aja.`,
-    helloDemo: `Boo! 👻 Aku ${BOT_NAME}. Sekarang aku masih mode demo. Ketuk ⚙️ lalu tempel API key Gemini gratis kamu biar otakku nyala.`,
-    taps: ['Hehe, geli!', 'Boo! Kaget ya?', 'Wiii!', 'Hai hai!', 'Lagi! Lagi!'],
+    hello: `Hai ganteng 😏 Aku ${BOT_NAME}. Colek aku, puter aku, atau langsung bilang aja mau apa.`,
+    helloDemo: `Hai kamu 😏 Aku ${BOT_NAME}. Masih mode demo, jadi cuma modal tampang doang. Ketuk ⚙️, tempel API key Gemini gratis, nanti aku tunjukin kemampuan asliku.`,
+    taps: ['Ehh, hati-hati megangnya 😏', 'Anjir, nggak bisa jauh-jauh dari aku ya?', 'Traktir dulu dong, baru pegang-pegang.', 'Suka ya? Oke, dicatat.', 'Lagi? Rakus juga kamu. Aku suka.'],
     errKey: 'Hmm, API key-nya nggak berfungsi. Cek lagi di ⚙️ Pengaturan (biasanya diawali "AIza").',
     errQuota: 'Lagi kebanyakan permintaan (batas gratis). Coba lagi semenit lagi ya.',
     errNet: 'Aku nggak bisa terhubung ke Gemini. Cek internet kamu lalu coba lagi.',
     errTimeout: 'Kelamaan nih. Coba tanya lagi ya?',
-    errBlocked: 'Maaf, yang itu aku nggak bisa jawab.',
+    errBlocked: 'Anjir, mulutku dibekep Google yang itu. Coba ngomongnya lebih halus dikit 😏',
     errOther: 'Ada masalah saat menghubungi Gemini: ',
     micNo: 'Input suara nggak tersedia di browser ini. Ketik aja ya! (Di iPhone, buka di Safari dan nyalakan Dikte di Pengaturan › Umum › Papan Ketik.)',
     micDenied: 'Aku butuh izin mikrofon untuk mendengar kamu. Izinkan di pengaturan Safari.',
@@ -62,22 +64,22 @@ const T = {
 // Demo mode (no key): a few canned friendly replies
 const DEMO = {
   en: [
-    [/\b(hi|hello|hey|yo)\b/i, `Hi there! 👻 I'm ${BOT_NAME}, your pocket ghost. I'm in demo mode, so my answers are canned for now.`],
-    [/name|who are you/i, `I'm ${BOT_NAME}, a friendly little ghost. Give me a Gemini key and I can actually think!`],
-    [/key|gemini|how|setup|set up/i, 'Easy: open aistudio.google.com/apikey, tap "Create API key", copy it, then tap ⚙️ here and paste it. It stays only on your phone.'],
-    [/joke|funny/i, 'Why don\'t ghosts lie? Because you can see right through them! 👻'],
+    [/\b(hi|hello|hey|yo)\b/i, `Well, look who showed up 😏 I'm ${BOT_NAME}. Demo mode, so my lines are canned, but damn, they're good ones.`],
+    [/name|who are you/i, `I'm ${BOT_NAME}, your pocket ghost and part-time bad influence. Give me a Gemini key and I'll actually think about you.`],
+    [/key|gemini|how|setup|set up/i, 'Easy, babe: open aistudio.google.com/apikey, tap "Create API key", copy it, then tap ⚙️ here and paste it. It stays only on your phone, our little secret.'],
+    [/joke|funny/i, 'Why don\'t ghosts lie? Because you can see right through them. Unlike you, you sneaky little shit 😏'],
   ],
   id: [
-    [/\b(hai|halo|hi|hello|hey|p)\b/i, `Halo! 👻 Aku ${BOT_NAME}, hantu saku kamu. Aku masih mode demo, jadi jawabanku masih template.`],
-    [/nama|siapa/i, `Aku ${BOT_NAME}, hantu kecil yang ramah. Kasih aku API key Gemini biar aku bisa mikir beneran!`],
-    [/key|gemini|cara|gimana|bagaimana|setting/i, 'Gampang: buka aistudio.google.com/apikey, ketuk "Create API key", salin, lalu ketuk ⚙️ di sini dan tempel. Key-nya cuma disimpan di HP kamu.'],
-    [/lucu|lelucon|jokes?/i, 'Kenapa hantu nggak bisa bohong? Soalnya kelihatan tembus pandang! 👻'],
+    [/\b(hai|halo|hi|hello|hey|p)\b/i, `Wah, ada yang nyariin nih 😏 Aku ${BOT_NAME}. Masih mode demo, jadi jawabanku template, tapi tetep bikin meleleh kan?`],
+    [/nama|siapa/i, `Aku ${BOT_NAME}, hantu saku kamu sekaligus pengaruh buruk paruh waktu. Kasih API key Gemini biar aku bisa mikirin kamu beneran.`],
+    [/key|gemini|cara|gimana|bagaimana|setting/i, 'Gampang, sayang: buka aistudio.google.com/apikey, ketuk "Create API key", salin, terus ketuk ⚙️ di sini dan tempel. Cuma disimpen di HP kamu, rahasia kita berdua.'],
+    [/lucu|lelucon|jokes?/i, 'Kenapa hantu nggak bisa bohong? Soalnya tembus pandang. Beda sama kamu, anjir, licin banget 😏'],
   ],
   fallback: {
-    en: ['I\'m in demo mode, so I can\'t really think yet. Tap ⚙️ and paste a free Gemini key from aistudio.google.com/apikey and I\'ll answer anything!',
-         'Ooh, good question! My ghost brain needs a Gemini key to answer that. Tap ⚙️ to add one (it\'s free).'],
-    id: ['Aku masih mode demo, jadi belum bisa mikir beneran. Ketuk ⚙️ dan tempel API key Gemini gratis dari aistudio.google.com/apikey, nanti aku jawab apa saja!',
-         'Pertanyaan bagus! Otak hantuku butuh API key Gemini buat jawab itu. Ketuk ⚙️ untuk menambahkan (gratis).'],
+    en: ['Mmm, I\'d love to answer that, but I\'m in demo mode, all charm and no brain. Tap ⚙️ and paste a free Gemini key from aistudio.google.com/apikey and I\'m all yours.',
+         'Damn, good question. Wake my brain up first: tap ⚙️ and add a free Gemini key, then we\'ll talk properly 😏'],
+    id: ['Pengen banget jawab, tapi aku masih mode demo, modal gombal doang. Ketuk ⚙️ dan tempel API key Gemini gratis dari aistudio.google.com/apikey, abis itu aku milikmu.',
+         'Anjir, pertanyaan bagus. Nyalain otakku dulu: ketuk ⚙️ dan tambahin API key Gemini gratis, baru kita ngobrol beneran 😏'],
   },
 };
 let demoIdx = 0;
@@ -115,7 +117,7 @@ document.querySelector('.sub-name').textContent = BOT_NAME;
 // ---------- 3D ----------
 let ghost = null;
 // Defaults: Echo particle ghost (e) on the premium black UI (4). ?ghost=cute brings back the original.
-const APP_VERSION = 'v3';
+const APP_VERSION = 'v4';
 const DEFAULT_GHOST = 'sheet', DEFAULT_UI = '4';
 let DESIGN = (new URLSearchParams(location.search).get('ghost') || DEFAULT_GHOST).toLowerCase();
 if (DESIGN === 'cute') DESIGN = 'default';

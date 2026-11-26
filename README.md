@@ -14,6 +14,10 @@
 - Change defaults via `DEFAULT_GHOST` / `DEFAULT_UI` in `js/main.js`.
 
 ## Voice
-- Default: natural Gemini TTS (`gemini-3.8-flash-lite-tts`, falls back to `gemini-3.8-flash-tts`) via `POST /v1beta/interactions` with the same key; 13 prebuilt voices (default Leda – youthful, cute; style "cheerful, sweet, playful and soft"); iPhone fallback prefers young bright voices (Zoe, Nicky, Ava, Samantha) at pitch 1.18, rate 1.05.
+- Default: natural Gemini TTS (`gemini-3.8-flash-lite-tts`, falls back to `gemini-3.8-flash-tts`) via `POST /v1beta/interactions` with the same key; 13 prebuilt voices (default Leda – youthful; style "playful, warm and teasing, a little sultry"); iPhone fallback prefers young bright voices (Zoe, Nicky, Ava, Samantha) at pitch 1.18, rate 1.05.
 - Falls back automatically to the best on-device voice (prefers Premium/Enhanced/Siri voices, skips robotic novelty voices), spoken sentence by sentence at natural rate/pitch.
 - Settings › Voice: choose engine + voice, "Test" button.
+
+## Persona (v4)
+Adult, personal-use persona: cheeky, sarcastic, blunt best friend and shameless flirt (suggestive, never explicit), swearing in EN/ID slang allowed, no moralising or "as an AI" disclaimers, follows the user's language. Edit `SYSTEM_PROMPT` in `js/main.js` to change it.
+Gemini `safetySettings` are sent at the most permissive levels the API accepts (`OFF` for harassment, hate speech, sexually explicit, dangerous, plus civic integrity if supported; steps down to `BLOCK_NONE` or defaults if the API rejects a level). Google's core protections still apply; blocked replies get a snarky fallback line.

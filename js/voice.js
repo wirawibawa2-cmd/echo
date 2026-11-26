@@ -10,7 +10,7 @@ export const GEMINI_VOICES = [
 ];
 export const DEFAULT_GEMINI_VOICE = 'Leda';
 // Short constant style string (per Google's TTS prompting guide): cute but natural, never robotic or chipmunk.
-const STYLE = 'cheerful, sweet, playful and soft, like a cute friendly little ghost; light and bubbly, smiling while talking; natural, not robotic';
+const STYLE = 'playful, warm and teasing, a little sultry and flirty, smiling while talking; natural, not robotic';
 
 // Novelty / old robotic voices on Apple & others – never auto-pick these.
 const ROBOTIC = /(albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|eddy|flo|grandma|grandpa|reed|rocko|sandy|shelley|eloquence|espeak)/i;

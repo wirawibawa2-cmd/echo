@@ -6,6 +6,15 @@ export const MODELS = [
   { id: 'gemini-flash-latest',   label: 'gemini-flash-latest (auto alias)' },
 ];
 export const DEFAULT_MODEL = MODELS[0].id;
+// Most permissive thresholds the API allows. Core harms (e.g. child safety) are always blocked by Google regardless.
+const CATS = ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT'];
+const SAFETY_LEVELS = [
+  [...CATS, 'HARM_CATEGORY_CIVIC_INTEGRITY'].map(category => ({ category, threshold: 'OFF' })),
+  CATS.map(category => ({ category, threshold: 'OFF' })),
+  CATS.map(category => ({ category, threshold: 'BLOCK_NONE' })),
+  null,                                   // last resort: API defaults (already Off on current models)
+];
+let safetyIdx = 0;                        // remembers the first level the API accepted
 const ENDPOINT = (m) => `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`;
 
 export class GeminiError extends Error { constructor(kind, msg, status) { super(msg); this.kind = kind; this.status = status; } }
@@ -24,6 +33,17 @@ export async function askGemini({ key, model, system, history, signal }) {
   throw lastErr;
 
   async function call(m) {
+    for (;;) {
+      try { return await callOnce(m, SAFETY_LEVELS[safetyIdx]); }
+      catch (e) {
+        // an unsupported category/threshold is a 400 – step down to the next accepted safety level
+        if (e.kind === 'api' && e.status === 400 && /safety|category|threshold|civic|harm/i.test(e.message) && safetyIdx < SAFETY_LEVELS.length - 1) { safetyIdx++; continue; }
+        throw e;
+      }
+    }
+  }
+
+  async function callOnce(m, safety) {
     let res;
     try {
       res = await fetch(ENDPOINT(m), {
@@ -32,7 +52,8 @@ export async function askGemini({ key, model, system, history, signal }) {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: system }] },
           contents: history,
-          generationConfig: { maxOutputTokens: 600 },
+          generationConfig: { maxOutputTokens: 600, temperature: 1.1 },
+          ...(safety ? { safetySettings: safety } : {}),
         }),
       });
     } catch (e) {
@@ -52,7 +73,7 @@ export async function askGemini({ key, model, system, history, signal }) {
     const cand = data?.candidates?.[0];
     const text = (cand?.content?.parts || []).filter(p => p.text && !p.thought).map(p => p.text).join('').trim();
     if (!text) {
-      if (data?.promptFeedback?.blockReason || cand?.finishReason === 'SAFETY') throw new GeminiError('blocked', 'blocked');
+      if (data?.promptFeedback?.blockReason || /SAFETY|PROHIBITED|BLOCKLIST|SPII|RECITATION/.test(cand?.finishReason || '')) throw new GeminiError('blocked', 'blocked');
       throw new GeminiError('empty', 'empty');
     }
     return text;
