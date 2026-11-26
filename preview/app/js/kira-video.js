@@ -1,9 +1,12 @@
 // Kira v8: video mascot. Two stacked muted, playsinline <video> elements crossfade between short clips.
 // Every clip starts and/or ends on the same home pose, so swaps line up. Ghost-compatible API for main.js.
 const DIR = 'assets/kira/';
-const V = '?v=8';
+const V = '?v=81';
 export const EXPRESSIONS = ['sultry', 'bedroom', 'liptease', 'breathless', 'smirk', 'wink', 'flustered'];
 export const SPICY = ['sultry', 'bedroom', 'liptease', 'breathless', 'smirk', 'wink'];
+// v8.1: random picks lean harder toward the spiciest looks
+const SPICY_W = ['sultry', 'sultry', 'bedroom', 'bedroom', 'breathless', 'breathless', 'flustered', 'liptease', 'liptease', 'smirk', 'wink'];
+const pickSpicy = () => SPICY_W[Math.floor(Math.random() * SPICY_W.length)];
 const FADE = 260;          // ms crossfade
 const HOLD = 700;          // ms hold on the expression's peak frame
 const log = (s) => { try { (window.__echoLog = window.__echoLog || []).push(s); window.__echoDbg?.(s); } catch {} };
@@ -70,7 +73,7 @@ export class KiraVideo {
   }
   // Play an expression: in-clip -> short hold -> return clip -> idle/talking.
   express(name) {
-    if (!EXPRESSIONS.includes(name)) name = SPICY[Math.floor(Math.random() * SPICY.length)];
+    if (!EXPRESSIONS.includes(name)) name = pickSpicy();
     if (this.mode === 'expr') { this.pendingExpr = name; return; }
     this.mode = 'expr';
     const v = this._play(name + '-in', false);
@@ -88,7 +91,7 @@ export class KiraVideo {
   _scheduleIdleExpr() {
     clearTimeout(this._idleT);
     this._idleT = setTimeout(() => {
-      if (this.mode === 'idle' && this.state === 'idle' && !document.hidden) this.express(SPICY[Math.floor(Math.random() * SPICY.length)]);
+      if (this.mode === 'idle' && this.state === 'idle' && !document.hidden) this.express(pickSpicy());
       this._scheduleIdleExpr();
     }, 14000 + Math.random() * 12000);
   }
@@ -101,7 +104,7 @@ export class KiraVideo {
     if (s === 'speaking' && this.mode !== 'talk') { this.mode = 'talk'; this._play('talking', true); setTimeout(() => this._preload('idle'), 600); }
     else if (s !== 'speaking' && this.mode === 'talk') { this.mode = 'idle'; this._play('idle', true); }
   }
-  react() { if (this.mode !== 'expr') this.express(SPICY[Math.floor(Math.random() * SPICY.length)]); }
+  react() { if (this.mode !== 'expr') this.express(pickSpicy()); }
   surprise() {}
   resize() {}
   setPointer(nx, ny) { this.stage.style.setProperty('--px', (nx * 4).toFixed(2) + 'px'); this.stage.style.setProperty('--py', (-ny * 3).toFixed(2) + 'px'); }
@@ -110,7 +113,7 @@ export class KiraVideo {
 
 // Emotion from the reply: the model appends a tag like [wink]; regex cues are the fallback.
 const CUES = [
-  ['flustered', /\b(blush\w*|flustered|embarrass\w*|stop it|you're making me)\b|😳|🙈|>\/?</i],
+  ['flustered', /\b(blush\w*|flustered|embarrass\w*|stop it|you're making me|needy)\b|😳|🙈|🥺|>\/?</i],
   ['wink', /\b(wink|kiss(es)?|muah|xoxo)\b|😘|😉|💋/i],
   ['breathless', /\b(breath\w*|heart('s)? racing|whoa|hot in here|weak in the knees)\b|🥵/i],
   ['liptease', /\b(tast\w*|delicious|yum\w*|lick\w*|naughty|bite)\b|😋|👅/i],
@@ -127,6 +130,6 @@ export function splitEmotion(text) {
   if (tag === 'none') tag = null;
   if (!tag) for (const [name, re] of CUES) if (re.test(text)) { tag = name; break; }
   // spicy ones should play often: no cue still triggers a random spicy look most of the time
-  if (!tag && Math.random() < 0.6) tag = SPICY[Math.floor(Math.random() * SPICY.length)];
+  if (!tag && Math.random() < 0.75) tag = pickSpicy();
   return { text, emotion: tag };
 }
