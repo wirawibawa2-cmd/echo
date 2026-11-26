@@ -1,0 +1,171 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#000000">
+<title>Echo – Heart voice (Kokoro) on iPhone</title>
+<style>
+body{margin:0;background:#000;color:#eef0f5;font:16px/1.45 -apple-system,system-ui,sans-serif;padding:calc(env(safe-area-inset-top) + 20px) 18px 40px}
+h1{font-size:22px;margin:0 0 4px}p.s{color:#9aa0ab;margin:0 0 12px;font-size:14px}
+.note{background:#1d1a12;border:1px solid #4a3d1c;color:#ffd28a;border-radius:12px;padding:10px 12px;font-size:14px;margin-bottom:10px}
+.crash{background:#2a1214;border:1px solid #6b2a2f;color:#ffb3b3;border-radius:12px;padding:10px 12px;font-size:14px;margin-bottom:10px}
+.card{background:#121418;border:1px solid #23262d;border-radius:16px;padding:14px;margin:10px 0}
+label{display:block;font-size:13px;color:#9aa0ab;margin:8px 0 4px}
+select,textarea{width:100%;box-sizing:border-box;background:#0b0c0f;color:#fff;border:1px solid #2a2d34;border-radius:12px;padding:10px;font:15px -apple-system,system-ui}
+textarea{min-height:70px}
+.row{display:flex;gap:8px;margin-top:10px}.row button{flex:1}
+button{font:600 16px -apple-system,system-ui;border:0;border-radius:12px;padding:13px 16px;background:#fff;color:#000}
+button.sec{background:#23262d;color:#fff;font-size:14px}button:disabled{opacity:.45}
+#bar{height:8px;background:#23262d;border-radius:6px;overflow:hidden;margin:10px 0 4px}#bar i{display:block;height:100%;width:0;background:#ff8fb1;transition:width .2s}
+#status{font-size:15px;color:#e6e9ef;min-height:1.4em;font-weight:600}#status.err{color:#ff8f8f}
+.stages{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:8px}
+.stages span{font-size:11px;text-align:center;padding:5px 0;border-radius:8px;background:#1a1c21;color:#6f7682}
+.stages span.on{background:#3a2a10;color:#ffd28a}.stages span.ok{background:#12301e;color:#7fe0a5}.stages span.bad{background:#3a1416;color:#ff9b9b}
+.log{font:12px/1.5 ui-monospace,monospace;color:#8b919c;white-space:pre-wrap;margin-top:10px;word-break:break-word}
+</style></head><body>
+<h1>❤️ Echo – Heart voice</h1>
+<p class="s">Kokoro-82M “af_heart”, open source (Apache-2.0), running fully on this phone – free, no key, no server. The model downloads once and is cached.</p>
+<div class="note">🔈 Silent mode off, volume up. Tap <b>Load &amp; speak</b> and keep this tab open. If the page reloads by itself, iPhone ran out of memory – it will tell you at which step and suggest a smaller setting.</div>
+<div id="crash" class="crash" hidden></div>
+<div class="card">
+  <label for="model">Model (bigger = better quality but more RAM)</label>
+  <select id="model"></select>
+  <label for="device">Engine</label>
+  <select id="device">
+    <option value="auto">Auto – WebGPU if available, else WASM</option>
+    <option value="wasm">WASM only (CPU, safest)</option>
+    <option value="webgpu">WebGPU only</option>
+  </select>
+  <label for="opt">Graph optimization (off = least RAM)</label>
+  <select id="opt"><option value="disabled">Off (least RAM) ★</option><option value="basic">Basic</option><option value="all">All (fastest, most RAM)</option></select>
+  <label for="mode">Playback</label>
+  <select id="mode"><option value="stream">Stream – start talking ASAP (may pause between sentences)</option><option value="gapless">Gapless – generate everything first, then play smoothly</option></select>
+  <label for="txt">Text</label>
+  <textarea id="txt">Well hello, gorgeous. I'm Echo, your pocket ghost. Ask me anything, I promise I'll only tease you a little.</textarea>
+  <div class="row"><button id="go">Load &amp; speak</button></div>
+  <div id="bar"><i></i></div>
+  <div id="status">Ready. Tap “Load &amp; speak”.</div>
+  <div class="stages"><span data-s="download">download</span><span data-s="session">session</span><span data-s="phonemize">phonemize</span><span data-s="generate">generate</span><span data-s="play">play</span></div>
+</div>
+<div class="row"><button class="sec" id="stop">Stop</button><button class="sec" id="clear">Clear downloaded models</button></div>
+<div class="log" id="log"></div>
+<script>
+window.__errs = [];
+function showErr(m) { var s = document.getElementById('status'); s.className = 'err'; s.textContent = 'Error: ' + m; document.getElementById('log').textContent += 'ERROR ' + m + '\n'; window.__errs.push(m); }
+addEventListener('error', function (e) { showErr((e.message || 'script error') + (e.filename ? ' @ ' + e.filename.split('/').pop() : '')); });
+addEventListener('unhandledrejection', function (e) { showErr(String(e.reason && e.reason.message || e.reason)); });
+setTimeout(function () { if (!window.__heartLoaded) showErr('voice script did not load (old iOS or blocked CDN). iOS ' + (navigator.userAgent.match(/OS (\d+_\d+)/) || [, '?'])[1]); }, 15000);
+</script>
+<script type="module">
+import { Heart, MODELS, chunks, isCached, clearCache } from './heart.js?v=2';
+window.__heartLoaded = true;
+const $ = (id) => document.getElementById(id);
+const T0 = performance.now(), ts = () => ((performance.now() - T0) / 1000).toFixed(1).padStart(5);
+const log = (s) => { $('log').textContent += `${ts()}s  ${s}\n`; };
+const status = (s, err) => { $('status').className = err ? 'err' : ''; $('status').textContent = s; };
+const ORDER = ['download', 'session', 'phonemize', 'generate', 'play'];
+const mark = (st, cls) => { const el = document.querySelector(`[data-s="${st === 'engine' ? 'session' : st}"]`); if (el) el.className = cls; };
+let curStage = null;
+// crash breadcrumbs: iOS kills the tab on OOM and reloads it – remember where we were
+const BC = 'echo.heart.stage';
+const crumb = (stage) => { try { localStorage.setItem(BC, JSON.stringify({ stage, model: $('model').value, device: $('device').value, opt: $('opt').value, t: Date.now() })); } catch {} };
+const clearCrumb = () => { try { localStorage.removeItem(BC); } catch {} };
+function onStage(st, msg) {
+  if (curStage && curStage !== st) mark(curStage, 'ok');
+  curStage = st; mark(st, 'on'); crumb(st);
+  status(`${st}: ${msg}`); log(`[${st}] ${msg}`);
+}
+const memo = JSON.parse(localStorage.getItem('echo.heart.prefs') || '{}');
+for (const m of MODELS) { const o = document.createElement('option'); o.value = m.id; o.textContent = `${m.label} · ${m.mb} MB`; $('model').appendChild(o); }
+$('model').value = memo.model || 'q8f16'; $('device').value = memo.device || 'auto'; $('opt').value = memo.opt || 'disabled'; $('mode').value = memo.mode || 'stream';
+if (!navigator.gpu) $('device').options[0].textContent = 'Auto – WASM (no WebGPU in this browser)';
+(async () => { for (const o of $('model').options) { const m = MODELS.find(x => x.id === o.value); if (await isCached(m.file)) o.textContent += ' · downloaded ✓'; } })();
+// previous crash?
+try {
+  const c = JSON.parse(localStorage.getItem(BC) || 'null');
+  if (c && Date.now() - c.t < 30 * 60e3) {
+    const m = MODELS.find(x => x.id === c.model) || MODELS[0];
+    let tip = '';
+    if (c.device !== 'wasm' && navigator.gpu) { $('device').value = 'wasm'; tip = 'Switched engine to WASM only. '; }
+    else { const smaller = MODELS.filter(x => x.mb < m.mb).sort((a, b) => b.mb - a.mb)[0]; if (smaller) { $('model').value = smaller.id; tip = `Switched to the smaller ${smaller.id} model. `; } }
+    if (c.opt !== 'disabled') { $('opt').value = 'disabled'; tip += 'Graph optimization set to Off. '; }
+    $('crash').hidden = false;
+    $('crash').innerHTML = `⚠️ Last try stopped during <b>${c.stage}</b> (model ${c.model}, engine ${c.device}) – the page was reloaded, which on iPhone almost always means it ran out of memory. ${tip}Tap Load &amp; speak to try again.`;
+    clearCrumb();
+  }
+} catch {}
+// audio: unlocked on the tap, Web Audio first, <audio> fallback
+let ctx = null, el = null, nextT = 0, srcs = [], job = 0;
+function unlock() {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!ctx) ctx = new AC();
+  if (ctx.state !== 'running') ctx.resume();
+  const b = ctx.createBuffer(1, 1, 22050), s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start(0);
+  if (!el) { el = new Audio(); el.setAttribute('playsinline', ''); el.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA='; el.play().catch(() => {}); }
+}
+function wav(pcm, rate) {
+  const b = new ArrayBuffer(44 + pcm.length * 2), v = new DataView(b), w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + pcm.length * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) * 32767, true);
+  return new Blob([b], { type: 'audio/wav' });
+}
+const elQueue = [];
+function elNext() { if (!elQueue.length || !el.paused && !el.ended && el.currentTime > 0) return; const u = elQueue.shift(); el.src = u; el.onended = elNext; el.play().catch(e => showErr('audio: ' + e.message)); }
+async function playChunk(pcm, rate) {
+  if (ctx && ctx.state !== 'running') { try { await Promise.race([ctx.resume(), new Promise(r => setTimeout(r, 600))]); } catch {} }
+  if (ctx && ctx.state === 'running') {
+    const buf = ctx.createBuffer(1, pcm.length, rate); buf.getChannelData(0).set(pcm);
+    const s = ctx.createBufferSource(); s.buffer = buf; s.connect(ctx.destination);
+    const at = Math.max(ctx.currentTime + 0.03, nextT); s.start(at); nextT = at + buf.duration + 0.08; srcs.push(s);
+    return 'webaudio';
+  }
+  elQueue.push(URL.createObjectURL(wav(pcm, rate))); elNext(); return 'audio-element';
+}
+let heart = null, loadedKey = null;
+async function go() {
+  unlock(); stop(); const my = ++job; nextT = 0;
+  const model = MODELS.find(m => m.id === $('model').value), device = $('device').value, opt = $('opt').value;
+  localStorage.setItem('echo.heart.prefs', JSON.stringify({ model: model.id, device, opt, mode: $('mode').value }));
+  document.querySelectorAll('.stages span').forEach(s => s.className = ''); curStage = null;
+  $('go').disabled = true; const t0 = performance.now();
+  try {
+    const key = `${model.id}|${device}|${opt}`;
+    if (loadedKey !== key) {
+      if (heart?.session) { try { await heart.session.release(); } catch {} }
+      heart = new Heart(onStage); loadedKey = null;
+      if (heart.ortKind && ((device === 'wasm') !== (heart.ortKind === 'wasm')) && navigator.gpu) log('note: engine type change needs a page reload to take full effect');
+      await heart.load(model, { device, opt, onProg: (l, t, hit) => {
+        if (hit) { $('bar').firstChild.style.width = '100%'; onStage('download', 'already downloaded ✓ (from cache)'); return; }
+        const pc = t ? Math.min(100, l / t * 100) : 0; $('bar').firstChild.style.width = pc.toFixed(0) + '%';
+        status(`download: ${(l / 1e6).toFixed(1)} / ${(t / 1e6).toFixed(0)} MB (one time)`);
+      } });
+      loadedKey = key; window.__load = performance.now() - t0; window.__device = heart.device;
+      log(`model loaded in ${(window.__load / 1000).toFixed(1)}s on ${heart.device}`);
+    }
+    if (my !== job) return;
+    const parts = chunks($('txt').value), gapless = $('mode').value === 'gapless', held = []; let first = true, t1 = performance.now();
+    for (const p of parts) {
+      if (my !== job) return;
+      const { pcm, rate, ms } = await heart.synth(p);
+      const dur = pcm.length / rate;
+      log(`  ${dur.toFixed(1)}s audio in ${(ms / 1000).toFixed(2)}s (${(ms / 1000 / dur).toFixed(2)}x real-time)`);
+      (window.__chunks = window.__chunks || []).push({ ms, dur, model: model.id, device: heart.device });
+      if (gapless) { held.push(pcm); if (held.length < parts.length) continue; }
+      for (const c of gapless ? held : [pcm]) {
+        onStage('play', gapless ? `all ${parts.length} chunks` : `chunk ${parts.indexOf(p) + 1}/${parts.length}`);
+        const how = await playChunk(c, rate);
+        if (first) { first = false; window.__first = performance.now() - t1; log(`first audio ${(window.__first / 1000).toFixed(2)}s after model ready (via ${how})`); }
+      }
+    }
+    mark('play', 'ok'); clearCrumb();
+    status(`Done ✓ Heart · ${model.id} on ${heart.device.toUpperCase()} – cached on this phone`); window.__done = true;
+  } catch (e) {
+    clearCrumb(); if (curStage) mark(curStage, 'bad');
+    showErr(`${curStage || 'start'}: ${e.message || e}`); loadedKey = null;
+  } finally { $('go').disabled = false; }
+}
+function stop() { job++; srcs.forEach(s => { try { s.stop(); } catch {} }); srcs = []; elQueue.length = 0; try { el && el.pause(); } catch {} }
+$('go').onclick = go; $('stop').onclick = stop;
+$('clear').onclick = async () => { await clearCache(); status('Downloaded models cleared.'); for (const o of $('model').options) o.textContent = o.textContent.replace(' · downloaded ✓', ''); };
+log(`device: ${navigator.userAgent.match(/iPhone OS [\d_]+|Mac OS X [\d_]+|Android [\d.]+|Linux/)?.[0] || 'unknown'} · WebGPU ${navigator.gpu ? 'yes' : 'no'} · RAM hint ${navigator.deviceMemory || '?'} GB`);
+window.__go = go;
+</script></body></html>
