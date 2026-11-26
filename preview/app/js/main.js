@@ -1,6 +1,6 @@
-import { Ghost } from './ghost.js?v=7';
-import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=7';
-import { Voice, Kokoro, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE, KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE } from './voice.js?v=7';
+import { Ghost } from './ghost.js?v=7.1';
+import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=7.1';
+import { Voice, Kokoro, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE, KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE } from './voice.js?v=7.1';
 
 // ====== Easy-to-change settings ======
 const BOT_NAME = 'Echo';
@@ -88,7 +88,7 @@ document.querySelector('.sub-name').textContent = BOT_NAME;
 // ---------- 3D ----------
 let ghost = null;
 // Defaults: Echo particle ghost (e) on the premium black UI (4). ?ghost=cute brings back the original.
-const APP_VERSION = 'v7';
+const APP_VERSION = 'v7.1';
 const DEFAULT_GHOST = 'sheet', DEFAULT_UI = '4';
 let DESIGN = (new URLSearchParams(location.search).get('ghost') || DEFAULT_GHOST).toLowerCase();
 if (DESIGN === 'cute') DESIGN = 'default';
@@ -290,7 +290,7 @@ voice.onKokoro = () => { updateDlPill(); updateNudge(); if (!el.sheet.hidden) sh
   if (c && ls.get(LS.engine, 'kokoro') === 'kokoro') {
     const [model, device] = (c.key || '').split('|');
     let what;
-    if (device !== 'wasm' && navigator.gpu) { ls.set(LS.kdevice, 'wasm'); what = 'switched the engine to WASM only'; }
+    if (device === 'webgpu' || (device !== 'wasm' && navigator.gpu && !/iPhone|iPad|iPod/.test(navigator.userAgent))) { ls.set(LS.kdevice, 'wasm'); what = 'switched the engine to WASM only'; }
     else {
       const cur = KOKORO_MODELS.find(m => m.id === model) || KOKORO_MODELS[0];
       const smaller = KOKORO_MODELS.filter(m => m.mb < cur.mb).sort((a, b) => b.mb - a.mb)[0];
@@ -387,7 +387,8 @@ const vEl = { engine: $('engineSelect'), g: $('geminiVoiceSelect'), d: $('device
   kOpts: $('kokoroOpts'), kModel: $('kModelSelect'), kDevice: $('kDeviceSelect'), kMode: $('kModeSelect'), kBar: $('kBar'), kStatus: $('kStatus'), kClear: $('kClearBtn') };
 for (const [id, label] of KOKORO_VOICES) { const o = document.createElement('option'); o.value = id; o.textContent = label; vEl.k.appendChild(o); }
 for (const m of KOKORO_MODELS) { const o = document.createElement('option'); o.value = m.id; o.textContent = `${m.label} · ${m.mb} MB`; vEl.kModel.appendChild(o); }
-if (!navigator.gpu) vEl.kDevice.options[0].textContent = 'Auto (WASM – no WebGPU here)';
+if (!navigator.gpu) { vEl.kDevice.options[0].textContent = 'Auto (WASM – no WebGPU here)'; vEl.kDevice.options[2].disabled = true; }
+else if (!/iPhone|iPad|iPod/.test(navigator.userAgent) && !(navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent))) vEl.kDevice.options[0].textContent = 'Auto (WebGPU → WASM)';
 async function markCached() { for (const o of vEl.kModel.options) { const base = o.textContent.replace(' · downloaded ✓', ''); o.textContent = base + (await Kokoro.isCached(o.value) ? ' · downloaded ✓' : ''); } }
 function showKStatus() {
   const k = voice.kokoro, st = vEl.kStatus; st.classList.remove('err');

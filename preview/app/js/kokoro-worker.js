@@ -1,8 +1,8 @@
 // Echo v7 – Kokoro TTS in a worker, so the ghost keeps animating while speech is generated.
 // Lean pipeline from /preview/heart.html: download streamed into Cache API, one JS copy dropped after session create,
 // single-threaded WASM + SIMD, memory arena off, graph optimization off by default; WebGPU first (Auto) with WASM fallback.
-import { textToPhonemes, VOCAB } from './kokoro-phonemize.js?v=7';
-import { KOKORO_HF as HF, KOKORO_CACHE as CACHE } from './kokoro-config.js?v=7';
+// v7.1: phonemes are made on the main thread (espeak-ng WASM hung inside a worker on iOS Safari); the worker only runs the model.
+import { KOKORO_HF as HF, KOKORO_CACHE as CACHE } from './kokoro-config.js?v=7.1';
 const ORT = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
 const stage = (s, msg) => postMessage({ type: 'stage', stage: s, msg });
 const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms / 1000}s`)), ms))]);
@@ -38,7 +38,8 @@ const styles = new Map();
 const SO = (opt) => ({ graphOptimizationLevel: opt || 'disabled', enableCpuMemArena: false, enableMemPattern: false, executionMode: 'sequential' });
 async function load({ file, device: want, opt }) {
   const t0 = performance.now();
-  let gpu = want !== 'wasm' && typeof navigator !== 'undefined' && !!navigator.gpu;
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  let gpu = (want === 'webgpu' || (want === 'auto' && !ios)) && typeof navigator !== 'undefined' && !!navigator.gpu;
   if (gpu) {   // skip software/fallback adapters and fp16 models on GPUs without shader-f16 (they only throw validation errors)
     try {
       const ad = await withTimeout(navigator.gpu.requestAdapter(), 5000, 'gpu');
@@ -75,11 +76,7 @@ async function style(voice) {
   if (!styles.has(voice)) { const r = await fetch(new URL(`../assets/voices/${voice}.bin?v=7`, import.meta.url)); if (!r.ok) throw new Error('voice file ' + voice + ' missing'); styles.set(voice, new Float32Array(await r.arrayBuffer())); }
   return styles.get(voice);
 }
-async function synth(text, voice, speed) {
-  stage('phonemize', text.slice(0, 40));
-  const ph = await withTimeout(textToPhonemes(text, 'a'), 20000, 'phonemizer');
-  const ids = [0]; for (const ch of ph) { const id = VOCAB[ch]; if (id !== undefined) ids.push(id); } ids.push(0);
-  if (ids.length > 510) { ids.length = 509; ids.push(0); }
+async function synth(ids, voice, speed) {
   const n = ids.length, off = 256 * Math.min(Math.max(n - 2, 0), 509), st = await style(voice);
   const feeds = {
     input_ids: new ort.Tensor('int64', BigInt64Array.from(ids, BigInt), [1, n]),
@@ -89,27 +86,15 @@ async function synth(text, voice, speed) {
   stage('generate', `${n} tokens · ${device}`);
   const t0 = performance.now(); let out;
   try { out = await withTimeout(session.run(feeds), 60000, 'speech generation'); }
-  catch (e) { if (device !== 'webgpu') throw e; await toWasm('error'); return synth(text, voice, speed); }
+  catch (e) { if (device !== 'webgpu') throw e; await toWasm('error'); return synth(ids, voice, speed); }
   let pcm = out.waveform.data;
   if (device === 'webgpu' && !checked) {
     let bad = 0, peak = 0; for (let i = 0; i < pcm.length; i += 7) { const v = pcm[i]; if (!Number.isFinite(v)) bad++; else peak = Math.max(peak, Math.abs(v)); }
-    if (bad || peak < 1e-4) { await toWasm(bad ? 'NaN output' : 'silent output'); return synth(text, voice, speed); }
+    if (bad || peak < 1e-4) { await toWasm(bad ? 'NaN output' : 'silent output'); return synth(ids, voice, speed); }
     checked = true; spare = null;
   }
   pcm = new Float32Array(pcm);   // own buffer, transferable
   return { pcm, ms: performance.now() - t0 };
-}
-// memory-friendly chunking: sentences, long ones split at commas (activation RAM grows with length)
-function chunks(text, max = 140) {
-  const out = [];
-  for (const s of (text.match(/[^.!?…]+[.!?…]*["')\]]*\s*/g) || [text]).map(x => x.trim()).filter(Boolean)) {
-    if (s.length <= max) { out.push(s); continue; }
-    let cur = '';
-    for (const p of s.split(/(?<=[,;:—])\s+/)) { if ((cur + ' ' + p).trim().length > max && cur) { out.push(cur.trim()); cur = p; } else cur = (cur + ' ' + p).trim(); }
-    while (cur.length > max) { const sp = cur.lastIndexOf(' ', max), cut = sp > 40 ? sp : max; out.push(cur.slice(0, cut).trim()); cur = cur.slice(cut).trim(); }
-    if (cur) out.push(cur);
-  }
-  return out;
 }
 let loading = null, job = 0;
 onmessage = async ({ data }) => {
@@ -123,7 +108,7 @@ onmessage = async ({ data }) => {
     try {
       if (!loading) throw new Error('voice not loaded');
       await loading;
-      const parts = chunks(data.text);
+      const parts = data.items;
       for (let i = 0; i < parts.length; i++) {
         if (my !== job) return;
         const { pcm, ms } = await synth(parts[i], data.voice, data.speed);

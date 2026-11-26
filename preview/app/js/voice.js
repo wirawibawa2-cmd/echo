@@ -1,6 +1,26 @@
 // Echo voice output (v7): free on-device Kokoro "Heart" voice first, then Gemini TTS (user's own key), then the iPhone voice.
-import { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE, KOKORO_CACHE, KOKORO_HF } from './kokoro-config.js?v=7';
+import { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE, KOKORO_CACHE, KOKORO_HF } from './kokoro-config.js?v=7.1';
 export { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE };
+import { textToPhonemes, VOCAB } from './kokoro-phonemize.js?v=7.1';
+const kTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what} timed out after ${ms / 1000}s`)), ms))]);
+// memory-friendly chunking: sentences, long ones split at commas (activation RAM grows with length)
+function kChunks(text, max = 140) {
+  const out = [];
+  for (const s of (text.match(/[^.!?…]+[.!?…]*["')\]]*\s*/g) || [text]).map(x => x.trim()).filter(Boolean)) {
+    if (s.length <= max) { out.push(s); continue; }
+    let cur = '';
+    for (const p of s.split(/(?<=[,;:—])\s+/)) { if ((cur + ' ' + p).trim().length > max && cur) { out.push(cur.trim()); cur = p; } else cur = (cur + ' ' + p).trim(); }
+    while (cur.length > max) { const sp = cur.lastIndexOf(' ', max), cut = sp > 40 ? sp : max; out.push(cur.slice(0, cut).trim()); cur = cur.slice(cut).trim(); }
+    if (cur) out.push(cur);
+  }
+  return out;
+}
+async function kIds(text) {
+  const ph = await kTimeout(textToPhonemes(text, 'a'), 8000, 'phonemizer');
+  const ids = [0]; for (const ch of ph) { const id = VOCAB[ch]; if (id !== undefined) ids.push(id); } ids.push(0);
+  if (ids.length > 510) { ids.length = 509; ids.push(0); }
+  return ids;
+}
 const TTS_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 export const TTS_MODELS = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
 export const GEMINI_VOICES = [
@@ -86,7 +106,7 @@ const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAI
 const CRUMB = 'echo.kokoro.crumb';
 export class Kokoro {
   constructor(onChange) { this.onChange = onChange || (() => {}); this.worker = null; this.state = 'idle'; this.progress = [0, 0]; this.error = ''; this.device = ''; this.key = ''; this.cached = false; this.jobs = new Map(); }
-  get ready() { return this.state === 'ready'; }
+  get ready() { return this.state === 'ready' && !this.phonErr; }
   get pct() { const [l, t] = this.progress; return t ? Math.min(100, Math.round(l / t * 100)) : 0; }
   crumb(stage) { try { localStorage.setItem(CRUMB, JSON.stringify({ stage, key: this.key, t: Date.now() })); } catch {} }
   clearCrumb() { try { localStorage.removeItem(CRUMB); } catch {} }
@@ -100,7 +120,7 @@ export class Kokoro {
     this.terminate();
     const m = KOKORO_MODELS.find(x => x.id === model) || KOKORO_MODELS[0];
     this.key = key; this.model = m; this.state = 'loading'; this.stage = 'download'; this.error = ''; this.progress = [0, m.mb * 1e6]; this.cached = false;
-    try { this.worker = new Worker(new URL('./kokoro-worker.js?v=7', import.meta.url), { type: 'module' }); }
+    try { this.worker = new Worker(new URL('./kokoro-worker.js?v=7.1', import.meta.url), { type: 'module' }); }
     catch (e) { this.state = 'error'; this.error = 'workers not supported: ' + (e.message || e); this.onChange(); return; }
     this.worker.onerror = (e) => { this.state = 'error'; this.error = 'voice engine failed to start' + (e.message ? ': ' + e.message : ''); this.clearCrumb(); this.onChange(); this._failJobs(this.error); };
     this.worker.onmessage = ({ data: d }) => {
@@ -117,19 +137,22 @@ export class Kokoro {
     };
     this.crumb('download');
     this.worker.postMessage({ type: 'load', file: m.file, device, opt });
+    if (!this.phonReady) { const t0 = performance.now(); kIds('Hi there.').then(() => { this.phonReady = true; this.phonMs = Math.round(performance.now() - t0); }).catch(e => { this.phonErr = String(e.message || e); }); }
     this.onChange();
   }
   _failJobs(msg) { for (const [id, j] of this.jobs) j.reject(new Error(msg)); this.jobs.clear(); }
   terminate() { try { this.worker?.terminate(); } catch {} this.worker = null; this._failJobs('voice reloaded'); if (this.state !== 'error') this.state = 'idle'; this.clearCrumb(); }
   stop() { this.worker?.postMessage({ type: 'stop' }); this._failJobs('stopped'); }
   // returns a promise; onChunk({pcm, rate, i, n, ms}) is called for each sentence as soon as it is ready
-  speak(text, voice, onChunk) {
-    if (!this.ready) return Promise.reject(new Error('voice not ready'));
+  async speak(text, voice, onChunk) {
+    if (!this.ready) throw new Error('voice not ready');
+    const items = [];
+    for (const part of kChunks(text)) items.push(await kIds(part));   // main thread: fast (ms per sentence once warm)
     const id = Math.random().toString(36).slice(2);
     return new Promise((resolve, reject) => {
       this.jobs.set(id, { resolve, reject, onChunk });
       this.crumb('generate');
-      this.worker.postMessage({ type: 'speak', id, text, voice: voice || DEFAULT_KOKORO_VOICE, speed: 1 });
+      this.worker.postMessage({ type: 'speak', id, items, voice: voice || DEFAULT_KOKORO_VOICE, speed: 1 });
     });
   }
   label() {
@@ -178,8 +201,8 @@ export class Voice {
       if (!this.unlocked) { this.el.src = SILENT_WAV; const pr = this.el.play(); pr?.catch?.(() => {}); }
     } catch {}
     try {   // speechSynthesis must speak once inside a gesture on iOS; a whitespace-only utterance can be ignored
-      if (this.synth && !this.synthPrimed && !this.speaking) {
-        this.synthPrimed = true;
+      if (this.synth && !this.speaking && !(this.synth.speaking || this.synth.pending) && Date.now() - (this._primeT || 0) > 1500) {
+        this.synthPrimed = true; this._primeT = Date.now();
         const u = new SpeechSynthesisUtterance('.'); u.volume = 0; u.rate = 2; this._utts.push(u); this.synth.speak(u);
       }
     } catch {}
@@ -206,6 +229,7 @@ export class Voice {
     const k = this.kokoro;
     if (k.state === 'loading') return k.stage === 'download' && !k.cached ? `Heart voice downloading ${k.pct}% (one time)` : `Heart voice starting (${k.stage})`;
     if (k.state === 'error') return `Heart voice failed – ${k.error}`;
+    if (k.phonErr) return `Heart voice text engine failed – ${k.phonErr}`;
     if (k.lastErr) return `Heart voice error – ${k.lastErr}`;
     return 'Heart voice not loaded';
   }
@@ -310,10 +334,17 @@ export class Voice {
     let chain = Promise.resolve(), firstErr = null;
     this._ksrcs = [];
     const play = (pcm, rate) => { chain = chain.then(() => tok === this.token ? this._playSeg(pcm, rate, tok) : null).catch(e => { firstErr = firstErr || e; }); };
-    await this.kokoro.speak(text, prefs.kokoroVoice, (c) => {
-      if (tok !== this.token) return;
-      if (gapless) held.push(c); else play(c.pcm, c.rate);
-    });
+    let wd = null, rejectWd = null;
+    const arm = (ms) => { clearTimeout(wd); wd = setTimeout(() => { this.kokoro.stop(); rejectWd?.(new Error(`too slow on this phone (no audio after ${ms / 1000}s)`)); }, ms); };
+    const watchdog = new Promise((_, rej) => { rejectWd = rej; });
+    arm(9000);
+    try {
+      await Promise.race([watchdog, this.kokoro.speak(text, prefs.kokoroVoice, (c) => {
+        if (tok !== this.token) return;
+        arm(20000);
+        if (gapless) held.push(c); else play(c.pcm, c.rate);
+      })]);
+    } finally { clearTimeout(wd); }
     if (gapless) for (const c of held) play(c.pcm, c.rate);
     await chain;
     if (firstErr) throw firstErr;
