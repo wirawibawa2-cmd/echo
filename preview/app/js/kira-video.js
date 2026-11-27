@@ -1,8 +1,8 @@
 // Kira v8: video mascot. Two stacked muted, playsinline <video> elements crossfade between short clips.
 // Every clip starts and/or ends on the same home pose, so swaps line up. Ghost-compatible API for main.js.
 const DIR = 'assets/kira/';
-const V = '?v=81';
-export const EXPRESSIONS = ['sultry', 'bedroom', 'liptease', 'breathless', 'smirk', 'wink', 'flustered'];
+const V = '?v=82';
+export const EXPRESSIONS = ['sultry', 'bedroom', 'liptease', 'breathless', 'smirk', 'wink', 'flustered', 'lovestruck'];
 export const SPICY = ['sultry', 'bedroom', 'liptease', 'breathless', 'smirk', 'wink'];
 // v8.1: random picks lean harder toward the spiciest looks
 const SPICY_W = ['sultry', 'sultry', 'bedroom', 'bedroom', 'breathless', 'breathless', 'flustered', 'liptease', 'liptease', 'smirk', 'wink'];
@@ -26,6 +26,8 @@ export class KiraVideo {
     this.token = 0;
     this._play('idle', true, true);
     this._scheduleIdleExpr();
+    const boot = new URLSearchParams(location.search).get('expr');
+    if (boot && EXPRESSIONS.includes(boot)) setTimeout(() => this.express(boot), 900);
     document.addEventListener('visibilitychange', () => { const v = this.vids[this.front]; if (document.hidden) v.pause(); else v.play().catch(() => {}); });
     // iOS may refuse the first autoplay in Low Power Mode: retry on the first touch
     const kick = () => { const v = this.vids[this.front]; if (v.paused) v.play().catch(() => {}); };
@@ -113,6 +115,7 @@ export class KiraVideo {
 
 // Emotion from the reply: the model appends a tag like [wink]; regex cues are the fallback.
 const CUES = [
+  ['lovestruck', /\b((i|i'd|i’ll|i will)\s+love\s+(you|u)|love\s+you(\s+too)?|love\s+u\b|lovestruck|love-struck|ador(e|ing)|obsessed with (you|u)|heart[- ]eyes|so in love)\b|😍|🥰|❤️|💕|💖|💗|💘/i],
   ['flustered', /\b(blush\w*|flustered|embarrass\w*|stop it|you're making me|needy)\b|😳|🙈|🥺|>\/?</i],
   ['wink', /\b(wink|kiss(es)?|muah|xoxo)\b|😘|😉|💋/i],
   ['breathless', /\b(breath\w*|heart('s)? racing|whoa|hot in here|weak in the knees)\b|🥵/i],
@@ -121,12 +124,13 @@ const CUES = [
   ['sultry', /\b(gorgeous|sexy|hot|handsome|darling|babe|baby|seduc\w*|irresistible)\b|🔥/i],
   ['smirk', /\b(tease|teasing|roast\w*|nice try|oh really|cute|sure you)\b|😏|😈/i],
 ];
-const TAG_RE = /\s*\[(sultry|bedroom|lips?|liptease|breathless|smirk|wink|flustered|none)\]\s*$/i;
+const TAG_RE = /\s*\[(sultry|bedroom|lips?|liptease|breathless|smirk|wink|flustered|lovestruck|love|hearts?|none)\]\s*$/i;
 export function splitEmotion(text) {
   let tag = null;
   const m = String(text).match(TAG_RE);
   if (m) { tag = m[1].toLowerCase(); text = text.replace(TAG_RE, '').trim(); }
   if (tag === 'lip' || tag === 'lips') tag = 'liptease';
+  if (tag === 'love' || tag === 'heart' || tag === 'hearts') tag = 'lovestruck';
   if (tag === 'none') tag = null;
   if (!tag) for (const [name, re] of CUES) if (re.test(text)) { tag = name; break; }
   // spicy ones should play often: no cue still triggers a random spicy look most of the time
