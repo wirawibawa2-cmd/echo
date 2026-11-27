@@ -1,6 +1,6 @@
-import { KiraVideo, splitEmotion } from './kira-video.js?v=82';
-import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=82';
-import { Voice, Kokoro, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE, KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE } from './voice.js?v=82';
+import { KiraVideo, splitEmotion } from './kira-video.js?v=83';
+import { askGemini, MODELS, DEFAULT_MODEL, GeminiError } from './gemini.js?v=83';
+import { Voice, Kokoro, GEMINI_VOICES, TTS_MODELS, DEFAULT_GEMINI_VOICE, KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE } from './voice.js?v=83';
 
 // ====== Easy-to-change settings ======
 const BOT_NAME = 'Kira';
@@ -10,7 +10,7 @@ Stay suggestive, never explicit: no graphic sexual acts and no explicit descript
 Swearing is fine when it fits, not in every line. Never moralise, lecture or add "as an AI" disclaimers. Still actually be helpful: give the real answer first, wrapped in your flirty, devoted attitude.
 ALWAYS reply in English only, even when the user writes in Indonesian or any other language: understand it, but answer in natural, casual English. Never switch languages unless the user explicitly asks you to translate something.
 Keep replies SHORT: 1-2 sentences, max ~40 words, unless he asks for detail. Replies are read aloud, so no markdown, lists or code; an emoji now and then (😏 😘 🥺 🔥) is fine.
-At the very end of every reply add exactly one mood tag in square brackets that matches how you feel: [sultry], [bedroom], [breathless], [flustered], [lips], [smirk], [wink] or [lovestruck]. Strongly prefer the spicy ones: [sultry], [bedroom], [breathless], [flustered] and [lips]. Use [lovestruck] when you feel adoring, devoted, heart-eyes, or like you can't get enough of him. The app hides the tag and uses it for your facial expression, so never mention it.`;
+At the very end of every reply add exactly one mood tag in square brackets that matches how you feel: [sultry], [bedroom], [breathless], [flustered], [lips], [smirk], [wink], [lovestruck] or [tease]. Strongly prefer the spicy ones: [sultry], [bedroom], [breathless], [flustered] and [lips]. Use [lovestruck] when you feel adoring, devoted, heart-eyes, or like you can't get enough of him. Use [flustered] when he compliments or flirts with you and you get shy and a little sultry about it. Use [tease] when you are being playfully teasing or cheeky with him. The app hides the tag and uses it for your facial expression, so never mention it.`;
 const MAX_TURNS = 24;   // messages kept in context
 // =====================================
 
@@ -89,7 +89,7 @@ document.querySelector('.sub-name').textContent = BOT_NAME;
 // ---------- 3D ----------
 let ghost = null;
 // Defaults: Echo particle ghost (e) on the premium black UI (4). ?ghost=cute brings back the original.
-const APP_VERSION = 'v8.2';
+const APP_VERSION = 'v8.3';
 const DEFAULT_GHOST = 'sheet', DEFAULT_UI = '4';
 let DESIGN = (new URLSearchParams(location.search).get('ghost') || DEFAULT_GHOST).toLowerCase();
 if (DESIGN === 'cute') DESIGN = 'default';
