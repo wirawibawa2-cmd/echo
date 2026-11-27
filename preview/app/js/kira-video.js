@@ -1,11 +1,11 @@
 // Kira v8: video mascot. Two stacked muted, playsinline <video> elements crossfade between short clips.
 // Every clip starts and/or ends on the same home pose, so swaps line up. Ghost-compatible API for main.js.
 const DIR = 'assets/kira/';
-const V = '?v=84';
+const V = '?v=85';
 export const EXPRESSIONS = ['sultry', 'bedroom', 'liptease', 'breathless', 'smirk', 'wink', 'flustered', 'lovestruck', 'tease'];
 export const SPICY = ['sultry', 'bedroom', 'liptease', 'breathless', 'smirk', 'wink'];
-// v8.4: only play expressions already redrawn in the new look (old clips are a different character)
-export const READY = [];
+// v8.5: only play expressions already redrawn in the new look (old clips are a different character)
+export const READY = ['lovestruck', 'flustered', 'tease'];
 // v8.1: random picks lean harder toward the spiciest looks
 const SPICY_W = ['sultry', 'sultry', 'bedroom', 'bedroom', 'breathless', 'breathless', 'flustered', 'liptease', 'liptease', 'smirk', 'wink'];
 const pickSpicy = () => { const pool = READY.length ? READY : SPICY_W; return pool[Math.floor(Math.random() * pool.length)]; };
@@ -78,7 +78,7 @@ export class KiraVideo {
   // Play an expression: in-clip -> short hold -> return clip -> idle/talking.
   express(name) {
     if (!EXPRESSIONS.includes(name)) name = pickSpicy();
-    if (!READY.includes(name)) { log('[kira] skip ' + name + ' (not redrawn in v8.4 look yet)'); return; }
+    if (!READY.includes(name)) { log('[kira] skip ' + name + ' (not redrawn in v8.5 look yet)'); return; }
     if (this.mode === 'expr') { this.pendingExpr = name; return; }
     this.mode = 'expr';
     const v = this._play(name + '-in', false);

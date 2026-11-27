@@ -226,3 +226,43 @@ body.iconmode,body.iconmode #app{background:transparent!important}
 .key-nudge[hidden]{display:none}
 body.has-chat .key-nudge,body.iconmode .key-nudge,body.clean .key-nudge{display:none!important}
 .using.warn{color:#ffd28a}
+
+/* v7: free on-device voice */
+.kokoro-opts{margin-top:10px;padding:10px;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.03);display:grid;gap:8px}
+.kokoro-opts[hidden]{display:none}
+.kokoro-opts .mini{display:flex;align-items:center;gap:8px;justify-content:space-between;font-size:12.5px;color:#aab0bb}
+.kokoro-opts .mini select{max-width:62%;font-size:13px}
+.kbar{height:6px;border-radius:4px;background:rgba(255,255,255,.1);overflow:hidden}.kbar i{display:block;height:100%;width:0;background:#e9ecf3;transition:width .25s}
+.kstatus{font-size:12px;color:#c9ced8;min-height:1.2em}.kstatus.err{color:#ff9b9b}
+.ghost-btn.small{font-size:12px;padding:6px 10px;justify-self:start}
+.dl-pill{position:absolute;left:50%;transform:translateX(-50%);top:calc(var(--sat, 0px) + 100px);z-index:6;width:max-content;max-width:calc(100% - 40px);
+  padding:6px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.18);background:rgba(20,22,28,.85);color:#e9ecf3;font-size:12px;font-weight:600;
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);text-align:center;pointer-events:none}
+.dl-pill[hidden]{display:none}.dl-pill.err{color:#ffb3b3}
+body.iconmode .dl-pill,body.clean .dl-pill{display:none!important}
+
+#dbg{position:fixed;left:6px;right:6px;top:calc(var(--sat, 0px) + 6px);max-height:62vh;z-index:99;background:rgba(0,0,0,.92);border:1px solid #ffd28a;border-radius:12px;color:#e8ebf0;font:11.5px/1.4 ui-monospace,Menlo,monospace;display:flex;flex-direction:column;padding:8px}
+#dbg.min{max-height:40px;overflow:hidden}
+.dbg-h{font-size:12px;color:#ffd28a}.dbg-h span{color:#aab0bb}
+.dbg-s{white-space:pre-wrap;margin:6px 0;color:#9fe0b5}
+.dbg-b{display:flex;flex-wrap:wrap;gap:5px}.dbg-b button{font:600 12px -apple-system,system-ui;padding:8px 9px;border-radius:9px;border:0;background:#fff;color:#000}
+#dbgLog{flex:1;overflow:auto;margin:6px 0 0;white-space:pre-wrap;color:#c9ced8;min-height:80px}
+
+/* ===== v8 Kira: video mascot behind the glass on the black UI ===== */
+body[data-theme="5"]{--orange:#ff8fb8;--orange-2:#ffc2d9;--acc-hi:#ffd6e6;--acc-lo:#e0477f;--acc-deep:#4a0f26;--acc-glow:rgba(255,120,170,.45);--acc-ink:#1a0710}
+.kira-stage{position:absolute;left:50%;top:calc(var(--sat) + 70px);z-index:1;
+  height:calc(100vh - var(--sat) - var(--sab) - 70px - 150px);height:calc(100dvh - var(--sat) - var(--sab) - 70px - 150px);
+  max-width:calc(100vw - 24px);aspect-ratio:3/4;transform:translate(calc(-50% + var(--px,0px)),var(--py,0px));
+  border-radius:18px;overflow:hidden;background:#000;box-shadow:0 0 0 1px rgba(255,143,184,.18),0 18px 60px rgba(255,120,170,.16);
+  transition:transform .6s cubic-bezier(.2,.7,.2,1),height .35s ease;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+body.has-chat .kira-stage{height:min(calc(100vh - var(--sat) - var(--sab) - 70px - min(34vh,300px) - 96px),calc((100vw - 24px) * 4 / 3));height:min(calc(100dvh - var(--sat) - var(--sab) - 70px - min(34dvh,300px) - 96px),calc((100vw - 24px) * 4 / 3))}
+.kira-stage>img,.kira-stage>video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
+.kira-v{opacity:0;transition:opacity .26s linear}
+.kira-v.on{opacity:1}
+body.ui-4 .greet{top:auto;bottom:calc(var(--sab) + 138px)}
+body.ui-4 .greet h1{font-size:22px}
+body.ui-4 .greet .g-hi{display:none}
+body.ui-4:not(.has-chat) .kira-stage{height:min(calc(100dvh - var(--sat) - var(--sab) - 70px - 230px),calc((100vw - 24px) * 4 / 3))}
+body.ui-4 .dot{overflow:hidden;background:#111;box-shadow:0 0 14px var(--acc-glow)}
+body.ui-4 .dot img{width:100%;height:100%;display:block}
+body.ui-4 .dot.pulse{animation:pulse4 1.1s ease-in-out infinite}

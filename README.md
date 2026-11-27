@@ -1,3 +1,14 @@
+# Kira (Echo)
+
+Live app: Kira video mascot at the site root. Previous Echo v6 (3D ghost) is archived in `archive/old-root/`. Preview builds also stay under `/preview/app/`.
+
+- Open `index.html` via any static server (GitHub Pages works as-is, no build step).
+- AI: tap ⚙️, paste a free Gemini key from https://aistudio.google.com/apikey. The key is stored only in this browser's localStorage, never in the repo.
+- iPhone: open in Safari, Share › Add to Home Screen for a full-screen app.
+- Cache-busting query is `?v=85`.
+
+---
+
 # Echo – 3D ghost assistant (static, GitHub Pages ready)
 
 - Open `index.html` via any static server (GitHub Pages works as-is, no build step).

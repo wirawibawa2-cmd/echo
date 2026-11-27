@@ -1,4 +1,7 @@
-// Echo voice output: natural Gemini TTS (free tier, user's own key) with an iPhone/device voice fallback.
+// Echo voice output (v7): free on-device Kokoro "Heart" voice first, then Gemini TTS (user's own key), then the iPhone voice.
+import { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE, KOKORO_CACHE, KOKORO_HF } from './kokoro-config.js?v=85';
+export { KOKORO_MODELS, DEFAULT_KOKORO_MODEL, KOKORO_VOICES, DEFAULT_KOKORO_VOICE };
+import { Heart, chunks as heartChunks } from './heart-engine.js?v=85';
 const TTS_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/interactions';
 export const TTS_MODELS = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
 export const GEMINI_VOICES = [
@@ -80,15 +83,79 @@ function wavBlob(samples, rate) {
 }
 const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
 
+// ---- Kokoro client: owns the worker, download progress and crash breadcrumbs ----
+const CRUMB = 'echo.kokoro.crumb';
+// v7.2: no worker – the exact heart.html engine (heart-engine.js) on the main thread.
+export const dbg = (s) => { try { (window.__echoLog = window.__echoLog || []).push(`${(performance.now() / 1000).toFixed(1)}s ${s}`); window.__echoDbg?.(s); } catch {} };
+export class Kokoro {
+  constructor(onChange) { this.onChange = onChange || (() => {}); this.heart = null; this.state = 'idle'; this.progress = [0, 0]; this.error = ''; this.device = ''; this.key = ''; this.cached = false; this.job = 0; }
+  get ready() { return this.state === 'ready'; }
+  get pct() { const [l, t] = this.progress; return t ? Math.min(100, Math.round(l / t * 100)) : 0; }
+  crumb(stage) { try { localStorage.setItem(CRUMB, JSON.stringify({ stage, key: this.key, t: Date.now() })); } catch {} }
+  clearCrumb() { try { localStorage.removeItem(CRUMB); } catch {} }
+  static lastCrash() { try { const c = JSON.parse(localStorage.getItem(CRUMB) || 'null'); localStorage.removeItem(CRUMB); return c && Date.now() - c.t < 30 * 60e3 ? c : null; } catch { return null; } }
+  static async isCached(modelId) { try { const m = KOKORO_MODELS.find(x => x.id === modelId); const c = await caches.open(KOKORO_CACHE); return !!(await c.match(KOKORO_HF + m.file)); } catch { return false; } }
+  static async clearCache() { try { await caches.delete(KOKORO_CACHE); } catch {} }
+  load({ model = DEFAULT_KOKORO_MODEL, device = 'auto', opt = 'disabled' } = {}) {
+    const key = `${model}|${device}|${opt}`;
+    if (this.heart && this.key === key && this.state !== 'error') return;
+    this.terminate();
+    const m = KOKORO_MODELS.find(x => x.id === model) || KOKORO_MODELS[0];
+    this.key = key; this.model = m; this.state = 'loading'; this.stage = 'download'; this.error = ''; this.progress = [0, m.mb * 1e6]; this.cached = false;
+    const h = this.heart = new Heart((st, msg) => {
+      if (h !== this.heart) return;
+      this.stage = st === 'engine' ? 'session' : st; this.stageMsg = msg; dbg(`[heart] ${st}: ${msg}`);
+      if (st !== 'phonemize' && st !== 'generate') this.crumb(this.stage);
+      this.onChange({ type: 'stage' });
+    });
+    this.crumb('download'); this.onChange();
+    const t0 = performance.now();
+    h.load(m, { device, opt, onProg: (l, t, hit) => {
+      if (h !== this.heart) return;
+      if (hit) { this.cached = true; this.progress = [1, 1]; } else this.progress = [l, t || this.progress[1]];
+      this.onChange({ type: 'progress' });
+    } }).then(() => {
+      if (h !== this.heart) return;
+      this.state = 'ready'; this.device = h.device; this.loadMs = Math.round(performance.now() - t0); this.clearCrumb();
+      dbg(`[heart] ready on ${h.device} in ${this.loadMs} ms`); this.onChange({ type: 'ready' });
+    }).catch((e) => {
+      if (h !== this.heart) return;
+      this.state = 'error'; this.error = `${this.stage}: ${e.message || e}`; this.clearCrumb(); dbg('[heart] load error ' + this.error); this.onChange({ type: 'error' });
+    });
+  }
+  terminate() { this.job++; try { this.heart?.session?.release?.(); } catch {} this.heart = null; if (this.state !== 'error') this.state = 'idle'; this.clearCrumb(); }
+  stop() { this.job++; }
+  // generates sentence by sentence on the main thread (same as heart.html); onChunk({pcm, rate, i, n, ms})
+  async speak(text, voice, onChunk) {
+    if (!this.ready) throw new Error('voice not ready');
+    const my = ++this.job, h = this.heart;
+    await h.setVoice(voice || DEFAULT_KOKORO_VOICE);
+    const parts = heartChunks(text);
+    for (let i = 0; i < parts.length; i++) {
+      if (my !== this.job) throw new Error('stopped');
+      this.crumb('generate');
+      const { pcm, rate, ms } = await h.synth(parts[i]);
+      this.clearCrumb();
+      this.device = h.device;
+      dbg(`[heart] chunk ${i + 1}/${parts.length}: ${(pcm.length / rate).toFixed(1)}s audio in ${Math.round(ms)} ms`);
+      if (my !== this.job) throw new Error('stopped');
+      onChunk({ pcm, rate, i, n: parts.length, ms });
+    }
+  }
+  label() { return `${this.model ? this.model.id : DEFAULT_KOKORO_MODEL} · ${this.device === 'webgpu' ? 'WebGPU' : 'WASM'}`; }
+}
+
 export class Voice {
-  constructor({ getKey, getPrefs, onLevel, onStart, onEnd, onStatus }) {
-    Object.assign(this, { getKey, getPrefs, onLevel, onStart, onEnd, onStatus });
+  constructor({ getKey, getPrefs, onLevel, onPrepare, onStart, onEnd, onStatus }) {
+    Object.assign(this, { getKey, getPrefs, onLevel, onPrepare, onStart, onEnd, onStatus });
     this.synth = 'speechSynthesis' in window ? window.speechSynthesis : null;
     this.voices = [];
     this.ctx = null; this.analyser = null; this.source = null; this.el = null;
     this.unlocked = false; this.synthPrimed = false; this.speaking = false; this.token = 0; this.ttsFailUntil = 0;
     this.lastUsed = ''; this.lastReason = ''; this._utts = [];
     this.standalone = STANDALONE;
+    this.kokoro = new Kokoro((d) => { this.onStatus?.(); this.onKokoro?.(d); });
+    this.needSynth = () => { const p = this.getPrefs(); return p.engine === 'device' || ((!this.kokoro.ready || this.kokoro.lastErr) && (!this.getKey() || Date.now() < this.ttsFailUntil)); };
     if (this.synth) {
       const load = () => { const v = this.synth.getVoices(); if (v.length) this.voices = v; };
       load(); this.synth.addEventListener?.('voiceschanged', load);
@@ -104,7 +171,7 @@ export class Voice {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (AC && !this.ctx) {
         this.ctx = new AC();
-        this.analyser = this.ctx.createAnalyser(); this.analyser.fftSize = 512; this.analyser.connect(this.ctx.destination);
+        this.analyser = this.ctx.createAnalyser(); this.analyser.fftSize = 512;
         this._buf = new Uint8Array(this.analyser.fftSize);
         this.ctx.onstatechange = () => this.onStatus?.();
       }
@@ -119,8 +186,8 @@ export class Voice {
       if (!this.unlocked) { this.el.src = SILENT_WAV; const pr = this.el.play(); pr?.catch?.(() => {}); }
     } catch {}
     try {   // speechSynthesis must speak once inside a gesture on iOS; a whitespace-only utterance can be ignored
-      if (this.synth && !this.synthPrimed && !this.speaking) {
-        this.synthPrimed = true;
+      if (this.synth && this.needSynth?.() && !this.speaking && !(this.synth.speaking || this.synth.pending) && Date.now() - (this._primeT || 0) > 1500) {
+        this.synthPrimed = true; this._primeT = Date.now();
         const u = new SpeechSynthesisUtterance('.'); u.volume = 0; u.rate = 2; this._utts.push(u); this.synth.speak(u);
       }
     } catch {}
@@ -133,14 +200,30 @@ export class Voice {
   describe(lang) {
     const p = this.getPrefs(), key = this.getKey();
     if (this.lastUsed) return this.lastUsed;
-    if (p.engine !== 'device' && key && Date.now() > this.ttsFailUntil) return `Gemini ${p.geminiVoice || DEFAULT_GEMINI_VOICE} (AI voice)`;
+    const order = this._order(p);
+    for (const e of order) {
+      if (e === 'kokoro' && this.kokoro.ready) return this._kLabel(p);
+      if (e === 'gemini' && key && Date.now() > this.ttsFailUntil) return `Gemini ${p.geminiVoice || DEFAULT_GEMINI_VOICE} (AI voice)` + (order[0] === 'kokoro' ? ' · ' + this._kWhy() : '');
+    }
     return this._backupLabel(lang, this._reason(key, p));
+  }
+  _order(p) { return p.engine === 'device' ? ['device'] : p.engine === 'gemini' ? ['gemini', 'kokoro', 'device'] : ['kokoro', 'gemini', 'device']; }
+  _kName(p) { const id = p.kokoroVoice || DEFAULT_KOKORO_VOICE; return (KOKORO_VOICES.find(v => v[0] === id)?.[1] || id).split(' –')[0]; }
+  _kLabel(p) { return `${this._kName(p)} – free voice on this phone (Kokoro · ${this.kokoro.label()})`; }
+  _kWhy() {
+    const k = this.kokoro;
+    if (k.state === 'loading') return k.stage === 'download' && !k.cached ? `Heart voice downloading ${k.pct}% (one time)` : `Heart voice starting (${k.stage})`;
+    if (k.state === 'error') return `Heart voice failed – ${k.error}`;
+    if (k.phonErr) return `Heart voice text engine failed – ${k.phonErr}`;
+    if (k.lastErr) return `Heart voice error – ${k.lastErr}`;
+    return 'Heart voice not loaded';
   }
   _reason(key, p) {
     if (p.engine === 'device') return 'you picked the iPhone voice';
-    if (!key) return this.standalone ? 'no Gemini key in this home-screen app (it has its own storage – paste the key in ⚙️ here)' : 'no Gemini key – paste it in ⚙️';
-    if (Date.now() < this.ttsFailUntil && this.lastReason) return this.lastReason + ' (retrying in a few min)';
-    return this.lastReason || 'Gemini voice unavailable';
+    const kw = p.engine === 'kokoro' ? this._kWhy() + '; ' : '';
+    if (!key) return kw + (this.standalone ? 'no Gemini key in this home-screen app (it has its own storage – paste the key in ⚙️ here)' : 'no Gemini key – paste it in ⚙️');
+    if (Date.now() < this.ttsFailUntil && this.lastReason) return kw + this.lastReason + ' (retrying in a few min)';
+    return kw + (this.lastReason || 'Gemini voice unavailable');
   }
   _backupLabel(lang, reason) {
     const v = this.bestDeviceVoice(lang);
@@ -162,15 +245,12 @@ export class Voice {
       .sort((a, b) => b.s - a.s).map(x => x.v);
   }
 
-  level() {
-    if (!this.analyser || !this.source) return 0;
-    this.analyser.getByteTimeDomainData(this._buf);
-    let sum = 0; for (let i = 0; i < this._buf.length; i++) { const d = (this._buf[i] - 128) / 128; sum += d * d; }
-    return Math.min(1, Math.sqrt(sum / this._buf.length) * 4);
-  }
 
   stop() {
     this.token++;
+    try { this.kokoro.stop(); } catch {}
+    for (const src of this._ksrcs || []) { try { src.stop(); } catch {} }
+    this._ksrcs = [];
     try { this.source?.stop(); } catch {}
     this.source = null;
     try { if (this.el && !this.el.paused) this.el.pause(); } catch {}
@@ -178,6 +258,7 @@ export class Voice {
     this._finish(true);
   }
 
+  _markStarted() { if (!this._started) { this._started = true; this.onStart?.(); } }
   _finish() { if (this.speaking) { this.speaking = false; this.onEnd?.(); } this.onStatus?.(); }
 
   async speak(text, uiLang, opts = {}) {
@@ -187,20 +268,120 @@ export class Voice {
     if (!clean) return;
     const lang = detectLang(clean, uiLang);
     const prefs = this.getPrefs(), key = this.getKey();
-    const wantGemini = !opts.device && prefs.engine !== 'device' && !!key;
-    this.speaking = true; this.onStart?.();
-    if (wantGemini && Date.now() > this.ttsFailUntil) {
-      try { await this._speakGemini(clean, tok, prefs); if (tok === this.token || !this.speaking) { this.lastUsed = `Gemini ${prefs.geminiVoice || DEFAULT_GEMINI_VOICE} (AI voice)`; this.lastReason = ''; this.onStatus?.(); } return; }
-      catch (e) {
-        if (tok !== this.token) return;
-        this.lastReason = e.reason || ('Gemini voice error: ' + (e.message || e));
-        console.warn('Gemini TTS unavailable, using device voice:', this.lastReason);
-        if (e.status === 429 || e.status === 403 || e.status === 404 || e.status === 400) this.ttsFailUntil = Date.now() + 3 * 60 * 1000;
+    this.speaking = true; this._started = false; this.onPrepare?.();   // 'Speaking…' only once audio really starts
+    let order = this._order(prefs);
+    if (opts.device) order = this.kokoro.ready && prefs.engine !== 'device' ? ['kokoro', 'device'] : ['device'];   // short tap lines: never wait for a download or call the API
+    for (const eng of order) {
+      if (tok !== this.token) return;
+      if (eng === 'kokoro') {
+        if (!this.kokoro.ready) { if (this.kokoro.state === 'idle' && prefs.engine === 'kokoro') this.kokoro.load(prefs.kokoro); continue; }
+        try {
+          this.lastUsed = this._kLabel(prefs); this.onStatus?.();
+          await this._speakKokoro(clean, tok, prefs);
+          this.kokoro.lastErr = ''; if (tok === this.token) this.lastUsed = this._kLabel(prefs);
+          if (tok === this.token) this._finish();
+          return;
+        } catch (e) {
+          if (tok !== this.token || /stopped|reloaded/.test(e.message)) return;
+          this.kokoro.lastErr = String(e.message || e).slice(0, 90);
+          console.warn('Kokoro voice failed, falling back:', this.kokoro.lastErr);
+          continue;
+        }
+      }
+      if (eng === 'gemini') {
+        if (!key || Date.now() < this.ttsFailUntil) continue;
+        try { await this._speakGemini(clean, tok, prefs); if (tok === this.token || !this.speaking) { this.lastUsed = `Gemini ${prefs.geminiVoice || DEFAULT_GEMINI_VOICE} (AI voice)` + (order[0] === 'kokoro' ? ' · ' + this._kWhy() : ''); this.lastReason = ''; this.onStatus?.(); } return; }
+        catch (e) {
+          if (tok !== this.token) return;
+          this.lastReason = e.reason || ('Gemini voice error: ' + (e.message || e));
+          console.warn('Gemini TTS unavailable, falling back:', this.lastReason);
+          if (e.status === 429 || e.status === 403 || e.status === 404 || e.status === 400) this.ttsFailUntil = Date.now() + 3 * 60 * 1000;
+          continue;
+        }
+      }
+      if (eng === 'device') {
+        const reason = opts.device && prefs.engine !== 'device' ? 'short tap line (Heart voice not ready yet)' : this._reason(key, prefs);
+        await this._speakDevice(clean, lang, tok, reason);
+        return;
       }
     }
-    if (tok !== this.token) return;
-    const reason = opts.device ? 'short tap line (always iPhone voice)' : this._reason(key, prefs);
-    await this._speakDevice(clean, lang, tok, reason);
+  }
+
+  // Kokoro: sentences arrive from the worker one by one; "stream" plays each as soon as it is ready,
+  // "gapless" waits for the whole reply. Audio goes through the same gesture-unlocked context (+ analyser for the ghost).
+  async _speakKokoro(text, tok, prefs) {
+    const gapless = prefs.kokoroMode === 'gapless', held = [];
+    let chain = Promise.resolve(), firstErr = null;
+    this._ksrcs = [];
+    const play = (pcm, rate) => { chain = chain.then(() => tok === this.token ? this._playSeg(pcm, rate, tok) : null).catch(e => { firstErr = firstErr || e; }); };
+    let wd = null, rejectWd = null;
+    const arm = (ms) => { clearTimeout(wd); wd = setTimeout(() => { this.kokoro.stop(); rejectWd?.(new Error(`too slow on this phone (no audio after ${ms / 1000}s)`)); }, ms); };
+    const watchdog = new Promise((_, rej) => { rejectWd = rej; });
+    arm(30000);
+    try {
+      await Promise.race([watchdog, this.kokoro.speak(text, prefs.kokoroVoice, (c) => {
+        if (tok !== this.token) return;
+        arm(30000);
+        if (gapless) held.push(c); else play(c.pcm, c.rate);
+      })]);
+    } finally { clearTimeout(wd); }
+    if (gapless) for (const c of held) play(c.pcm, c.rate);
+    await chain;
+    if (firstErr) throw firstErr;
+  }
+  // v7.2 playback: an <audio> element (primed inside a tap) fed a WAV blob – the same route as samples.html, which
+  // plays on iPhone even with the silent switch on. Web Audio (heart.html's route) is the second try.
+  _playSeg(samples, rate, tok) {
+    const out = (this.getPrefs().audioOut || 'element');
+    const order = out === 'webaudio' ? ['webaudio', 'element'] : ['element', 'webaudio'];
+    const tryOne = async (i) => {
+      if (tok !== this.token) return;
+      const how = order[i]; if (!how) throw new Error('no audio output worked');
+      try { await (how === 'element' ? this._viaElement(samples, rate, tok) : this._viaCtx(samples, rate, tok)); this.lastOut = how; }
+      catch (e) { dbg(`[audio] ${how} failed: ${e.message || e}`); this.lastOutErr = `${how}: ${e.message || e}`; return tryOne(i + 1); }
+    };
+    return tryOne(0);
+  }
+  async _viaElement(samples, rate, tok) {
+    if (!this.el) throw new Error('no <audio> element (tap once)');
+    const dur = samples.length / rate, url = URL.createObjectURL(wavBlob(samples, rate));
+    const el = this.el;
+    try {
+      el.muted = false; el.volume = 1; el.src = url;
+      dbg(`[audio] <audio> play ${dur.toFixed(1)}s`);
+      // generation blocks the main thread, so a wall-clock timeout can fire late – check the element's real state instead
+      await Promise.race([el.play(), new Promise((res, rej) => setTimeout(() => (!el.paused && el.currentTime >= 0 ? res() : rej(new Error('play() blocked'))), 4000))]);
+      this._markStarted();
+      this._elPcm = samples; this._elRate = rate;   // ghost glow follows the real samples
+      await new Promise((resolve) => {
+        let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); el.onended = el.onerror = el.onpause = null; resolve(); };
+        el.onended = end; el.onerror = end; el.onpause = end; const guard = setTimeout(end, dur * 1000 + 2000);
+      });
+    } finally { this._elPcm = null; setTimeout(() => URL.revokeObjectURL(url), 3000); }
+  }
+  async _viaCtx(samples, rate, tok) {
+    if (this.ctx && this.ctx.state !== 'running') await withTimeout(this.ctx.resume?.(), 800);
+    if (!(this.ctx && this.ctx.state === 'running')) throw new Error('Web Audio ' + (this.ctx ? this.ctx.state : 'missing'));
+    const dur = samples.length / rate;
+    const buf = this.ctx.createBuffer(1, samples.length, rate); buf.getChannelData(0).set(samples);
+    dbg(`[audio] Web Audio play ${dur.toFixed(1)}s (ctx ${this.ctx.state}, ${this.ctx.sampleRate} Hz)`);
+    await new Promise((resolve) => {
+      const src = this.ctx.createBufferSource(); src.buffer = buf; src.connect(this.ctx.destination); src.connect(this.analyser);
+      let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); if (this.source === src) this.source = null; resolve(); };
+      src.onended = end; const guard = setTimeout(end, dur * 1000 + 1500);
+      this.source = src; (this._ksrcs = this._ksrcs || []).push(src); src.start(0); this._markStarted();
+    });
+  }
+  level() {
+    if (this._elPcm && this.el && !this.el.paused) {
+      const i = Math.floor(this.el.currentTime * this._elRate), p = this._elPcm; let sum = 0, n = 0;
+      for (let j = Math.max(0, i - 600); j < Math.min(p.length, i + 600); j += 4) { sum += p[j] * p[j]; n++; }
+      return n ? Math.min(1, Math.sqrt(sum / n) * 5) : 0;
+    }
+    if (!this.analyser || !this.source) return 0;
+    this.analyser.getByteTimeDomainData(this._buf);
+    let sum = 0; for (let i = 0; i < this._buf.length; i++) { const d = (this._buf[i] - 128) / 128; sum += d * d; }
+    return Math.min(1, Math.sqrt(sum / this._buf.length) * 4);
   }
 
   async _speakGemini(text, tok, prefs) {
@@ -252,34 +433,11 @@ export class Voice {
 
   // Play through the gesture-unlocked AudioContext; if iOS keeps it suspended, use the primed <audio> element.
   async _play(samples, rate, tok) {
-    const dur = samples.length / rate;
-    if (this.ctx && this.ctx.state !== 'running') await withTimeout(this.ctx.resume?.(), 800);
-    if (this.ctx && this.ctx.state === 'running') {
-      const buf = this.ctx.createBuffer(1, samples.length, rate);
-      buf.getChannelData(0).set(samples);
-      return new Promise((resolve) => {
-        const src = this.ctx.createBufferSource(); src.buffer = buf; src.connect(this.analyser);
-        let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); if (this.source === src) this.source = null; if (tok === this.token) this._finish(); resolve(); };
-        src.onended = end; const guard = setTimeout(end, dur * 1000 + 1500);   // never hang if onended is lost
-        this.source = src; src.start(0);
-      });
-    }
-    if (this.el) {
-      const url = URL.createObjectURL(wavBlob(samples, rate));
-      try {
-        this.el.src = url;
-        await this.el.play();
-        await new Promise((resolve) => {
-          let done = false; const end = () => { if (done) return; done = true; clearTimeout(guard); resolve(); };
-          this.el.onended = end; this.el.onerror = end; this.el.onpause = end; const guard = setTimeout(end, dur * 1000 + 1500);
-        });
-        if (tok === this.token) this._finish();
-        return;
-      } catch (e) { const er = new Error('locked'); er.reason = 'audio still locked – tap the screen once, then try again'; throw er; }
-      finally { setTimeout(() => URL.revokeObjectURL(url), 2000); }
-    }
-    const er = new Error('no audio'); er.reason = 'no audio output available'; throw er;
+    try { await this._playSeg(samples, rate, tok); }
+    catch (e) { const er = new Error('locked'); er.reason = 'audio blocked – ' + (e.message || e) + ' (tap the screen once)'; throw er; }
+    if (tok === this.token) this._finish();
   }
+
 
   async _waitVoices(ms) {
     if (!this.synth || this.voices.length) return;
@@ -308,7 +466,7 @@ export class Voice {
         u.rate = 1.05; u.pitch = 1.18; u.volume = 1;
         this._utts.push(u); if (this._utts.length > 8) this._utts.shift();   // keep refs: iOS GC can drop onend
         let started = false;
-        u.onstart = () => { started = true; };
+        u.onstart = () => { started = true; this._markStarted(); };
         u.onboundary = () => this.onLevel?.(1);
         let done = false; const fin = (ev) => {
           if (done) return; done = true; clearTimeout(guard); clearTimeout(kick);

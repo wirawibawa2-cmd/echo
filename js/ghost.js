@@ -1,7 +1,7 @@
 // Procedural 3D ghost mascot (three.js). Exposes a small API: setState(), react(), speakLevel.
 import * as THREE from 'three';
 import { RoomEnvironment } from '../vendor/RoomEnvironment.js';
-import { buildFX, updateFX } from './ghost-fx.js?v=6';
+import { buildFX, updateFX } from './ghost-fx.js?v=7.3';
 
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));

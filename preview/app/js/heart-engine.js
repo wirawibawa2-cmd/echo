@@ -3,8 +3,8 @@
 // Kokoro (Apache-2.0), ONNX Runtime Web (MIT). No key, no server. Lean pipeline: no transformers.js,
 // one model copy in JS (dropped right after session create), single-threaded WASM with SIMD, memory arena off.
 // v7.3: phonemes come from a pure-JS lexicon G2P (g2p.js) – the espeak-ng phonemizer hung inside the app on iPhone.
-import { VOCAB } from './kokoro-vocab.js?v=84';
-import { g2p, loadLexicon } from './g2p.js?v=84';
+import { VOCAB } from './kokoro-vocab.js?v=85';
+import { g2p, loadLexicon } from './g2p.js?v=85';
 const ORT_VER = '1.22.0', ORT = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VER}/dist/`;
 const HF = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/';
 const CACHE = 'echo-kokoro-v1';
@@ -74,7 +74,7 @@ export class Heart {
     this.stage('download', `${model.id} · ${model.mb} MB`);
     await this.setVoice(this.voiceId || 'af_heart');
     this.stage('download', 'English dictionary (~1.3 MB)');
-    await withTimeout(loadLexicon(new URL('../assets/lexicon-us.tsv?v=84', import.meta.url).href), 60000, 'dictionary download');
+    await withTimeout(loadLexicon(new URL('../assets/lexicon-us.tsv?v=85', import.meta.url).href), 60000, 'dictionary download');
     let bytes = await fetchModel(HF + model.file, onProg);
     this.stage('engine', `loading ONNX Runtime (${wantGpu ? 'WebGPU+WASM' : 'WASM'})`); await tick();
     const ort = await withTimeout(loadOrt(wantGpu), 60000, 'engine load');
