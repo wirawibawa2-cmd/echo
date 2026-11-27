@@ -1,12 +1,14 @@
 // Kira v8: video mascot. Two stacked muted, playsinline <video> elements crossfade between short clips.
 // Every clip starts and/or ends on the same home pose, so swaps line up. Ghost-compatible API for main.js.
 const DIR = 'assets/kira/';
-const V = '?v=83';
+const V = '?v=84';
 export const EXPRESSIONS = ['sultry', 'bedroom', 'liptease', 'breathless', 'smirk', 'wink', 'flustered', 'lovestruck', 'tease'];
 export const SPICY = ['sultry', 'bedroom', 'liptease', 'breathless', 'smirk', 'wink'];
+// v8.4: only play expressions already redrawn in the new look (old clips are a different character)
+export const READY = [];
 // v8.1: random picks lean harder toward the spiciest looks
 const SPICY_W = ['sultry', 'sultry', 'bedroom', 'bedroom', 'breathless', 'breathless', 'flustered', 'liptease', 'liptease', 'smirk', 'wink'];
-const pickSpicy = () => SPICY_W[Math.floor(Math.random() * SPICY_W.length)];
+const pickSpicy = () => { const pool = READY.length ? READY : SPICY_W; return pool[Math.floor(Math.random() * pool.length)]; };
 const FADE = 260;          // ms crossfade
 const HOLD = 700;          // ms hold on the expression's peak frame
 const log = (s) => { try { (window.__echoLog = window.__echoLog || []).push(s); window.__echoDbg?.(s); } catch {} };
@@ -76,6 +78,7 @@ export class KiraVideo {
   // Play an expression: in-clip -> short hold -> return clip -> idle/talking.
   express(name) {
     if (!EXPRESSIONS.includes(name)) name = pickSpicy();
+    if (!READY.includes(name)) { log('[kira] skip ' + name + ' (not redrawn in v8.4 look yet)'); return; }
     if (this.mode === 'expr') { this.pendingExpr = name; return; }
     this.mode = 'expr';
     const v = this._play(name + '-in', false);
@@ -93,7 +96,7 @@ export class KiraVideo {
   _scheduleIdleExpr() {
     clearTimeout(this._idleT);
     this._idleT = setTimeout(() => {
-      if (this.mode === 'idle' && this.state === 'idle' && !document.hidden) this.express(pickSpicy());
+      if (READY.length && this.mode === 'idle' && this.state === 'idle' && !document.hidden) this.express(pickSpicy());
       this._scheduleIdleExpr();
     }, 14000 + Math.random() * 12000);
   }
